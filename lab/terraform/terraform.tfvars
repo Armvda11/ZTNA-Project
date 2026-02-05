@@ -1,0 +1,1 @@
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICRAghnDOnCEofNknCiCBjkbdB3XY5/9YwBdYUkv72wo hermas@hermas-station"

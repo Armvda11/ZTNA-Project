@@ -1,0 +1,37 @@
+# ZTNA Gateway Configuration
+
+server:
+  host: "0.0.0.0"
+  ssh_port: 2222  # SSH proxy port
+  admin_port: 9090  # Admin/metrics port
+
+controlplane:
+  url: "https://10.10.20.30:8443"
+  ca_public_key_endpoint: "/api/v1/ca/public-key"
+  policy_check_endpoint: "/api/v1/policies"
+  tls_skip_verify: true  # Set to false in production with proper certs
+
+ssh:
+  host_key_path: "/etc/ztna/gateway_host_key"
+  trusted_ca_keys_path: "/etc/ztna/trusted_user_ca_keys"
+  
+routing:
+  # Map resources to backend SSH servers
+  targets:
+    - name: "lan-app"
+      host: "10.10.30.10"
+      port: 22
+      user: "ztna"
+    - name: "lan-admin"
+      host: "10.10.30.11"
+      port: 22
+      user: "ztna"
+
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "json"  # json or text
+  output: "stdout"  # stdout, stderr, or file path
+
+session:
+  timeout: "15m"  # Session timeout (must match cert validity)
+  max_concurrent: 100  # Max concurrent sessions

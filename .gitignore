@@ -1,0 +1,83 @@
+# Terraform State
+terraform.tfstate*
+.terraform/
+.terraform.lock.hcl
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.vscode/
+*.code-workspace
+
+# OS
+Thumbs.db
+*.log
+*.pid
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+ENV/
+env/
+
+# Go
+bin/
+.go/
+*.o
+*.a
+*.so
+vendor/
+*.out
+
+# SSH Keys (local)
+.ssh/
+*.pem
+id_ed25519
+id_ed25519.pub
+
+# Local Development
+.env.local
+*.local
+sandbox/
+
+# Testing
+test-results/
+*.test
+
+# Build output
+control-plane/ztna-cp
+gateway/ztna-gw
+
+# Docker
+.env
+.env.local
+
+# Logs
+*.log
+
+# Certs
+*.crt
+*.key
+*.csr
+certs/
+
+# Test
+coverage.out
+*.test
+
+# Generated
+dist/
+build/

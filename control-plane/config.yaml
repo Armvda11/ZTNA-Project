@@ -1,0 +1,48 @@
+# ZTNA Control Plane Configuration
+
+server:
+  host: "0.0.0.0"
+  port: 8443
+  tls:
+    enabled: true  # ✅ Now enabled in production
+    cert: "/etc/ztna/tls/server.crt"
+    key: "/etc/ztna/tls/server.key"
+
+auth:
+  jwt_secret: "change-this-in-production-use-env-var"  # Override with ZTNA_JWT_SECRET
+  token_expiry: "15m"  # JWT token validity duration
+  rate_limit:
+    enabled: true
+    requests_per_minute: 5
+    burst: 10
+
+ssh:
+  ca_key_path: "/etc/ztna/ssh_ca"
+  cert_validity: "15m"  # SSH certificate validity duration
+  cert_principals:
+    - "ztna-user"
+    - "app-access"
+
+policies:
+  default_deny: true
+  rules:
+    - user: "alice"
+      resources: ["lan-app", "lan-admin"]
+      allowed: true
+    - user: "bob"
+      resources: ["lan-app"]
+      allowed: true
+    - user: "attacker"
+      resources: ["*"]
+      allowed: false
+
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "json"  # json or text
+  output: "stdout"  # stdout, stderr, or file path
+
+database:
+  type: "sqlite"  # sqlite or postgres
+  path: "/var/lib/ztna/control-plane.db"
+  # For postgres:
+  # dsn: "postgres://user:pass@localhost:5432/ztna"
