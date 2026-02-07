@@ -1,24 +1,33 @@
 # ZTNA Control Plane Configuration
 
 server:
-  host: "0.0.0.0"
-  port: 8443
+  host: "0.0.0.0"  # ENV: ZTNA_CP_SERVER_HOST
+  port: 8443  # ENV: ZTNA_CP_SERVER_PORT
   tls:
-    enabled: true  # ✅ Now enabled in production
-    cert: "/etc/ztna/tls/server.crt"
-    key: "/etc/ztna/tls/server.key"
+    enabled: true  # ENV: ZTNA_CP_TLS_ENABLED
+    cert: "/etc/ztna/tls/server.crt"  # ENV: ZTNA_CP_TLS_CERT
+    key: "/etc/ztna/tls/server.key"  # ENV: ZTNA_CP_TLS_KEY
 
 auth:
-  jwt_secret: "change-this-in-production-use-env-var"  # Override with ZTNA_JWT_SECRET
-  token_expiry: "15m"  # JWT token validity duration
+  jwt_secret: "change-this-in-production-use-env-var"  # ENV: ZTNA_CP_JWT_SECRET (or legacy ZTNA_JWT_SECRET)
+  issuer: "ztna-cp"  # ENV: ZTNA_CP_JWT_ISSUER
+  audience: "ztna-clients"  # ENV: ZTNA_CP_JWT_AUDIENCE
+  token_expiry: "15m"  # ENV: ZTNA_CP_TOKEN_EXPIRY
+  refresh_token_expiry: "24h"  # ENV: ZTNA_CP_REFRESH_TOKEN_EXPIRY
   rate_limit:
-    enabled: true
-    requests_per_minute: 5
-    burst: 10
+    enabled: true  # ENV: ZTNA_CP_RATE_LIMIT_ENABLED
+    requests_per_minute: 5  # ENV: ZTNA_CP_RATE_LIMIT_RPM
+    burst: 10  # ENV: ZTNA_CP_RATE_LIMIT_BURST
+
+api:
+  rate_limit:
+    enabled: true  # ENV: ZTNA_CP_API_RATE_LIMIT_ENABLED
+    requests_per_minute: 60  # ENV: ZTNA_CP_API_RATE_LIMIT_RPM
+    burst: 30  # ENV: ZTNA_CP_API_RATE_LIMIT_BURST
 
 ssh:
-  ca_key_path: "/etc/ztna/ssh_ca"
-  cert_validity: "15m"  # SSH certificate validity duration
+  ca_key_path: "/etc/ztna/ssh_ca"  # ENV: ZTNA_CP_CA_KEY_PATH
+  cert_validity: "15m"  # ENV: ZTNA_CP_CERT_VALIDITY
   cert_principals:
     - "ztna-user"
     - "app-access"
@@ -37,12 +46,12 @@ policies:
       allowed: false
 
 logging:
-  level: "info"  # debug, info, warn, error
-  format: "json"  # json or text
-  output: "stdout"  # stdout, stderr, or file path
+  level: "info"  # ENV: ZTNA_CP_LOG_LEVEL
+  format: "json"  # ENV: ZTNA_CP_LOG_FORMAT
+  output: "stdout"  # ENV: ZTNA_CP_LOG_OUTPUT
 
 database:
-  type: "sqlite"  # sqlite or postgres
-  path: "/var/lib/ztna/control-plane.db"
+  type: "sqlite"  # ENV: ZTNA_CP_DB_TYPE
+  path: "/var/lib/ztna/control-plane.db"  # ENV: ZTNA_CP_DB_PATH
   # For postgres:
-  # dsn: "postgres://user:pass@localhost:5432/ztna"
+  # dsn: "postgres://user:pass@localhost:5432/ztna"  # ENV: ZTNA_CP_DB_DSN

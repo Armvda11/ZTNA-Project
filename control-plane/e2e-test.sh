@@ -86,7 +86,13 @@ TEST_RESULTS[service_status]="unknown"
 TEST_RESULTS[health_check]="unknown"
 TEST_RESULTS[wan_health]="unknown"
 TEST_RESULTS[login]="unknown"
+TEST_RESULTS[bad_login]="unknown"
+TEST_RESULTS[refresh_logout]="unknown"
+TEST_RESULTS[ca_public_key]="unknown"
+TEST_RESULTS[policy_versions]="unknown"
+TEST_RESULTS[rule_crud]="unknown"
 TEST_RESULTS[cert_request]="unknown"
+TEST_RESULTS[audit_logs]="unknown"
 TEST_RESULTS[rate_limiting]="unknown"
 
 declare -A TEST_DETAILS
@@ -138,7 +144,13 @@ generate_json_report() {
     "health_check": "HEALTH_STATUS",
     "wan_health": "WAN_STATUS",
     "login": "LOGIN_STATUS",
+        "bad_login": "BAD_LOGIN_STATUS",
+        "refresh_logout": "REFRESH_LOGOUT_STATUS",
+        "ca_public_key": "CA_PUBLIC_KEY_STATUS",
+        "policy_versions": "POLICY_VERSIONS_STATUS",
+        "rule_crud": "RULE_CRUD_STATUS",
     "cert_request": "CERT_STATUS",
+        "audit_logs": "AUDIT_STATUS",
     "rate_limiting": "RATE_STATUS"
   },
   "next_steps": {
@@ -160,7 +172,13 @@ EOFJ
     sed -i "s|HEALTH_STATUS|${TEST_RESULTS[health_check]}|g" "$file"
     sed -i "s|WAN_STATUS|${TEST_RESULTS[wan_health]}|g" "$file"
     sed -i "s|LOGIN_STATUS|${TEST_RESULTS[login]}|g" "$file"
+    sed -i "s|BAD_LOGIN_STATUS|${TEST_RESULTS[bad_login]}|g" "$file"
+    sed -i "s|REFRESH_LOGOUT_STATUS|${TEST_RESULTS[refresh_logout]}|g" "$file"
+    sed -i "s|CA_PUBLIC_KEY_STATUS|${TEST_RESULTS[ca_public_key]}|g" "$file"
+    sed -i "s|POLICY_VERSIONS_STATUS|${TEST_RESULTS[policy_versions]}|g" "$file"
+    sed -i "s|RULE_CRUD_STATUS|${TEST_RESULTS[rule_crud]}|g" "$file"
     sed -i "s|CERT_STATUS|${TEST_RESULTS[cert_request]}|g" "$file"
+    sed -i "s|AUDIT_STATUS|${TEST_RESULTS[audit_logs]}|g" "$file"
     sed -i "s|RATE_STATUS|${TEST_RESULTS[rate_limiting]}|g" "$file"
     
     echo "✓ Report saved: $file"
@@ -190,7 +208,13 @@ EOFMD
 | Health Check (Local) | ${TEST_RESULTS[health_check]} |
 | Health Check (WAN Client) | ${TEST_RESULTS[wan_health]} |
 | Authentication | ${TEST_RESULTS[login]} |
+| Authentication (Bad Password) | ${TEST_RESULTS[bad_login]} |
+| Refresh + Logout | ${TEST_RESULTS[refresh_logout]} |
+| CA Public Key | ${TEST_RESULTS[ca_public_key]} |
+| Policy Versions (Admin) | ${TEST_RESULTS[policy_versions]} |
+| Policy Rules CRUD (Admin) | ${TEST_RESULTS[rule_crud]} |
 | SSL Certificate Request | ${TEST_RESULTS[cert_request]} |
+| Audit Logs | ${TEST_RESULTS[audit_logs]} |
 | Rate Limiting | ${TEST_RESULTS[rate_limiting]} |
 
 ## Next Steps
@@ -271,13 +295,19 @@ else
 fi
 echo ""
 echo "== Login + policy checks =="
-TOKEN=$(curl $CURL_OPTS -s -X POST ${BASE_URL}/api/v1/auth/login \
+LOGIN_RESP=$(curl $CURL_OPTS -s -X POST ${BASE_URL}/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"alice","password":"alice123"}' | jq -r '.token' 2>/dev/null)
+    -d '{"username":"alice","password":"alice123"}')
+TOKEN=$(printf '%s' "$LOGIN_RESP" | jq -r '.token' 2>/dev/null)
+REFRESH_TOKEN=$(printf '%s' "$LOGIN_RESP" | jq -r '.refresh_token' 2>/dev/null)
 
 if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
     echo "FAIL: login failed"
     TEST_RESULTS[login]="fail"
+    TEST_RESULTS[bad_login]="skip"
+    TEST_RESULTS[refresh_logout]="skip"
+    TEST_RESULTS[policy_versions]="skip"
+    TEST_RESULTS[rule_crud]="skip"
 else
     echo "Token OK"
     TEST_RESULTS[login]="pass"
@@ -287,6 +317,63 @@ else
     BAD_TOKEN="${TOKEN}x"
     HTTP_STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" -X GET ${BASE_URL}/api/v1/policies/lan-app -H "Authorization: Bearer $BAD_TOKEN")
     echo "Invalid token status: $HTTP_STATUS"
+    if [ "$HTTP_STATUS" = "401" ] || [ "$HTTP_STATUS" = "403" ]; then
+        TEST_RESULTS[bad_login]="pass"
+    else
+        TEST_RESULTS[bad_login]="fail"
+    fi
+
+    if [ -n "$REFRESH_TOKEN" ] && [ "$REFRESH_TOKEN" != "null" ]; then
+        REFRESH_RESP=$(curl $CURL_OPTS -s -X POST ${BASE_URL}/api/v1/auth/refresh \
+          -H "Content-Type: application/json" \
+          -d "{\"refresh_token\":\"$REFRESH_TOKEN\"}")
+        REFRESHED_TOKEN=$(printf '%s' "$REFRESH_RESP" | jq -r '.token' 2>/dev/null)
+
+        if [ -n "$REFRESHED_TOKEN" ] && [ "$REFRESHED_TOKEN" != "null" ]; then
+            LOGOUT_STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" -X POST ${BASE_URL}/api/v1/auth/logout \
+              -H "Authorization: Bearer $REFRESHED_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"refresh_token\":\"$REFRESH_TOKEN\"}")
+
+            AFTER_LOGOUT=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" -X GET ${BASE_URL}/api/v1/policies/lan-app \
+              -H "Authorization: Bearer $REFRESHED_TOKEN")
+
+            if [ "$LOGOUT_STATUS" = "200" ] && ( [ "$AFTER_LOGOUT" = "401" ] || [ "$AFTER_LOGOUT" = "403" ] ); then
+                TEST_RESULTS[refresh_logout]="pass"
+            else
+                TEST_RESULTS[refresh_logout]="fail"
+            fi
+        else
+            TEST_RESULTS[refresh_logout]="fail"
+        fi
+    else
+        TEST_RESULTS[refresh_logout]="fail"
+    fi
+
+    POLICY_VERSIONS_STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" -X GET ${BASE_URL}/api/v1/policies/versions \
+      -H "Authorization: Bearer $TOKEN")
+    if [ "$POLICY_VERSIONS_STATUS" = "200" ]; then
+        TEST_RESULTS[policy_versions]="pass"
+    else
+        TEST_RESULTS[policy_versions]="fail"
+    fi
+
+    RULE_CREATE_RESP=$(curl $CURL_OPTS -s -X POST ${BASE_URL}/api/v1/policies/rules \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"subject_type":"user","subject":"bob","resource":"test-resource","allowed":true}')
+    RULE_ID=$(printf '%s' "$RULE_CREATE_RESP" | jq -r '.rule.id' 2>/dev/null)
+    if [ -n "$RULE_ID" ] && [ "$RULE_ID" != "null" ]; then
+        RULE_DELETE_STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" -X DELETE ${BASE_URL}/api/v1/policies/rules/${RULE_ID} \
+          -H "Authorization: Bearer $TOKEN")
+        if [ "$RULE_DELETE_STATUS" = "200" ]; then
+            TEST_RESULTS[rule_crud]="pass"
+        else
+            TEST_RESULTS[rule_crud]="fail"
+        fi
+    else
+        TEST_RESULTS[rule_crud]="fail"
+    fi
 fi
 
 echo ""
@@ -308,8 +395,30 @@ fi
 
 echo ""
 
+echo "== CA public key =="
+CA_KEY_STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" -X GET ${BASE_URL}/api/v1/ca/public-key)
+if [ "$CA_KEY_STATUS" = "200" ]; then
+    TEST_RESULTS[ca_public_key]="pass"
+else
+    TEST_RESULTS[ca_public_key]="fail"
+fi
+
+echo ""
+
 echo "== Audit logs (latest 5) =="
-curl $CURL_OPTS -s -X GET ${BASE_URL}/api/v1/audit -H "Authorization: Bearer $TOKEN" | jq '.logs[0:5]'
+if [ -n "${TOKEN:-}" ] && [ "$TOKEN" != "null" ]; then
+    AUDIT_RESP=$(curl $CURL_OPTS -s -X GET ${BASE_URL}/api/v1/audit -H "Authorization: Bearer $TOKEN")
+    printf '%s\n' "$AUDIT_RESP" | jq '.logs[0:5]'
+    AUDIT_COUNT=$(printf '%s' "$AUDIT_RESP" | jq -r '.logs | length' 2>/dev/null)
+    if [ -n "$AUDIT_COUNT" ] && [ "$AUDIT_COUNT" != "null" ] && [ "$AUDIT_COUNT" -gt 0 ]; then
+        TEST_RESULTS[audit_logs]="pass"
+    else
+        TEST_RESULTS[audit_logs]="fail"
+    fi
+else
+    echo "SKIP: login failed"
+    TEST_RESULTS[audit_logs]="skip"
+fi
 
 echo ""
 

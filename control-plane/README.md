@@ -6,7 +6,6 @@ Control Plane (Policy Decision Point) du système ZTNA.
 
 - **[TESTING.md](TESTING.md)** - Guide complet de test (HTTP, HTTPS, rapports)
 - **[DEPLOYMENT.md](DEPLOYMENT.md)** - Rapport de déploiement complet et statut du système
-- **[SECURITY.md](SECURITY.md)** - Vulnérabilités corrigées et procédures de sécurité
 - **[security-audit.sh](security-audit.sh)** - Script d'audit de sécurité automatisé
 - **[deploy.sh](deploy.sh)** - Script de déploiement complet (build + config + service)
 - **[deploy-config-only.sh](deploy-config-only.sh)** - Déploiement rapide de config (sans rebuild)
@@ -87,17 +86,26 @@ server:
   host: "0.0.0.0"
   port: 8443
   tls:
-    enabled: false
+    enabled: true
     cert: "/etc/ztna/tls/server.crt"
     key: "/etc/ztna/tls/server.key"
 
 auth:
-  jwt_secret: "change-me"  # Override avec ZTNA_JWT_SECRET
+  jwt_secret: "change-me"  # Override avec ZTNA_CP_JWT_SECRET
+  issuer: "ztna-cp"
+  audience: "ztna-clients"
   token_expiry: "15m"
+  refresh_token_expiry: "24h"
   rate_limit:
     enabled: true
     requests_per_minute: 5
     burst: 10
+
+api:
+  rate_limit:
+    enabled: true
+    requests_per_minute: 60
+    burst: 30
 
 ssh:
   ca_key_path: "/etc/ztna/ssh_ca"

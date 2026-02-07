@@ -48,8 +48,8 @@ Bienvenue dans le guide complet de dépannage pour le lab ZTNA. Ce document couv
 
 4. **Installation manuelle**
    ```bash
-   # Si setup.sh échoue, voir SETUP.md pour l'installation manuelle
-   cat SETUP.md
+   # Si setup.sh echoue, voir docs/SETUP.md pour l'installation manuelle
+   cat docs/SETUP.md
    ```
 
 ---

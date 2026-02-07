@@ -290,13 +290,15 @@ Script d'audit de sécurité automatique vérifiant:
 **Action:**
 ```bash
 # Générer un secret fort
-export ZTNA_JWT_SECRET=$(openssl rand -base64 32)
+export ZTNA_CP_JWT_SECRET=$(openssl rand -base64 32)
 
 # Configurer systemd
 ssh ztna@10.10.20.30 'sudo systemctl edit ztna-cp.service'
 # Ajouter:
 [Service]
-Environment="ZTNA_JWT_SECRET=<votre_secret_fort>"
+Environment="ZTNA_CP_JWT_SECRET=<votre_secret_fort>"
+Environment="ZTNA_CP_JWT_ISSUER=ztna-cp"
+Environment="ZTNA_CP_JWT_AUDIENCE=ztna-clients"
 ```
 
 #### 2. TLS/HTTPS (Haute Priorité)
@@ -308,14 +310,14 @@ Environment="ZTNA_JWT_SECRET=<votre_secret_fort>"
 server:
   tls:
     enabled: true
-    cert_file: "/etc/ztna/tls/server.crt"
-    key_file: "/etc/ztna/tls/server.key"
+    cert: "/etc/ztna/tls/server.crt"
+    key: "/etc/ztna/tls/server.key"
 ```
 
 #### 3. Mots de Passe Bcrypt (Moyenne Priorité)
-**Risque:** Les mots de passe sont stockés en clair dans SQLite.
+**Risque:** Les mots de passe en clair ne sont plus acceptes.
 
-**Action:** Implémenter le hachage bcrypt dans `storage.CreateUser()` et `storage.ValidatePassword()`.
+**Action:** Migrer les anciens comptes vers des hashes bcrypt.
 
 #### 4. Rate Limiting (Moyenne Priorité)
 **Risque:** Attaques par force brute sur `/api/v1/auth/login`.

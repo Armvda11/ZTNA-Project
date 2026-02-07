@@ -12,9 +12,16 @@ func TestLoad(t *testing.T) {
 server:
   host: "0.0.0.0"
   port: 9000
+	tls:
+		enabled: true
+		cert: "/tmp/test.crt"
+		key: "/tmp/test.key"
 auth:
   jwt_secret: "test-secret"
+	issuer: "ztna-cp"
+	audience: "ztna-clients"
   token_expiry: "10m"
+	refresh_token_expiry: "24h"
 ssh:
   ca_key_path: "/tmp/test_ca"
   cert_validity: "5m"
@@ -29,6 +36,12 @@ logging:
 database:
   type: "sqlite"
   path: ":memory:"
+
+api:
+	rate_limit:
+		enabled: false
+		requests_per_minute: 60
+		burst: 30
 `
 	tmpfile, err := os.CreateTemp("", "config-*.yaml")
 	if err != nil {
@@ -75,10 +88,23 @@ func TestValidate(t *testing.T) {
 		{
 			name: "valid config",
 			config: Config{
-				Server: ServerConfig{Port: 8443},
+				Server: ServerConfig{
+					Port: 8443,
+					TLS: TLSConfig{
+						Enabled: true,
+						Cert:    "/tmp/test.crt",
+						Key:     "/tmp/test.key",
+					},
+				},
 				Auth: AuthConfig{
 					JWTSecret:   "secret",
+					Issuer:      "ztna-cp",
+					Audience:    "ztna-clients",
 					TokenExpiry: "15m",
+					RefreshTTL:  "24h",
+				},
+				API: APIConfig{
+					RateLimit: RateLimitConfig{Enabled: false},
 				},
 				SSH: SSHConfig{
 					CAKeyPath:    "/tmp/ca",
@@ -91,10 +117,23 @@ func TestValidate(t *testing.T) {
 		{
 			name: "invalid port",
 			config: Config{
-				Server: ServerConfig{Port: 99999},
+				Server: ServerConfig{
+					Port: 99999,
+					TLS: TLSConfig{
+						Enabled: true,
+						Cert:    "/tmp/test.crt",
+						Key:     "/tmp/test.key",
+					},
+				},
 				Auth: AuthConfig{
 					JWTSecret:   "secret",
+					Issuer:      "ztna-cp",
+					Audience:    "ztna-clients",
 					TokenExpiry: "15m",
+					RefreshTTL:  "24h",
+				},
+				API: APIConfig{
+					RateLimit: RateLimitConfig{Enabled: false},
 				},
 				SSH: SSHConfig{
 					CAKeyPath:    "/tmp/ca",
@@ -107,10 +146,23 @@ func TestValidate(t *testing.T) {
 		{
 			name: "missing jwt secret",
 			config: Config{
-				Server: ServerConfig{Port: 8443},
+				Server: ServerConfig{
+					Port: 8443,
+					TLS: TLSConfig{
+						Enabled: true,
+						Cert:    "/tmp/test.crt",
+						Key:     "/tmp/test.key",
+					},
+				},
 				Auth: AuthConfig{
 					JWTSecret:   "",
+					Issuer:      "ztna-cp",
+					Audience:    "ztna-clients",
 					TokenExpiry: "15m",
+					RefreshTTL:  "24h",
+				},
+				API: APIConfig{
+					RateLimit: RateLimitConfig{Enabled: false},
 				},
 				SSH: SSHConfig{
 					CAKeyPath:    "/tmp/ca",
@@ -137,15 +189,28 @@ func TestEnvironmentOverride(t *testing.T) {
 	content := `
 server:
   port: 8443
+	tls:
+		enabled: true
+		cert: "/tmp/test.crt"
+		key: "/tmp/test.key"
 auth:
   jwt_secret: "file-secret"
+	issuer: "ztna-cp"
+	audience: "ztna-clients"
   token_expiry: "15m"
+	refresh_token_expiry: "24h"
 ssh:
   ca_key_path: "/tmp/ca"
   cert_validity: "15m"
 database:
   type: "sqlite"
   path: ":memory:"
+
+api:
+	rate_limit:
+		enabled: false
+		requests_per_minute: 60
+		burst: 30
 `
 	tmpfile, err := os.CreateTemp("", "config-*.yaml")
 	if err != nil {
@@ -171,5 +236,96 @@ database:
 	// Verify environment override
 	if cfg.Auth.JWTSecret != "env-secret" {
 		t.Errorf("Expected jwt_secret 'env-secret' from env, got '%s'", cfg.Auth.JWTSecret)
+	}
+}
+
+func TestEnvironmentOverridesExtended(t *testing.T) {
+	content := `
+server:
+  host: "0.0.0.0"
+  port: 8443
+  tls:
+		enabled: true
+    cert: "/tmp/default.crt"
+    key: "/tmp/default.key"
+auth:
+  jwt_secret: "file-secret"
+	issuer: "ztna-cp"
+	audience: "ztna-clients"
+  token_expiry: "15m"
+	refresh_token_expiry: "24h"
+  rate_limit:
+    enabled: false
+    requests_per_minute: 5
+    burst: 10
+ssh:
+  ca_key_path: "/tmp/ca"
+  cert_validity: "15m"
+database:
+  type: "sqlite"
+  path: ":memory:"
+
+api:
+	rate_limit:
+		enabled: false
+		requests_per_minute: 60
+		burst: 30
+`
+	tmpfile, err := os.CreateTemp("", "config-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpfile.Name())
+
+	if _, err := tmpfile.Write([]byte(content)); err != nil {
+		t.Fatal(err)
+	}
+	tmpfile.Close()
+
+	os.Setenv("ZTNA_CP_SERVER_PORT", "9443")
+	os.Setenv("ZTNA_CP_TLS_ENABLED", "true")
+	os.Setenv("ZTNA_CP_TLS_CERT", "/etc/ztna/tls/server.crt")
+	os.Setenv("ZTNA_CP_TLS_KEY", "/etc/ztna/tls/server.key")
+	os.Setenv("ZTNA_CP_RATE_LIMIT_ENABLED", "true")
+	os.Setenv("ZTNA_CP_RATE_LIMIT_RPM", "60")
+	os.Setenv("ZTNA_CP_RATE_LIMIT_BURST", "30")
+	os.Setenv("ZTNA_CP_DB_PATH", "/var/lib/ztna/test.db")
+	defer os.Unsetenv("ZTNA_CP_SERVER_PORT")
+	defer os.Unsetenv("ZTNA_CP_TLS_ENABLED")
+	defer os.Unsetenv("ZTNA_CP_TLS_CERT")
+	defer os.Unsetenv("ZTNA_CP_TLS_KEY")
+	defer os.Unsetenv("ZTNA_CP_RATE_LIMIT_ENABLED")
+	defer os.Unsetenv("ZTNA_CP_RATE_LIMIT_RPM")
+	defer os.Unsetenv("ZTNA_CP_RATE_LIMIT_BURST")
+	defer os.Unsetenv("ZTNA_CP_DB_PATH")
+
+	cfg, err := Load(tmpfile.Name())
+	if err != nil {
+		t.Fatalf("Failed to load config with environment overrides: %v", err)
+	}
+
+	if cfg.Server.Port != 9443 {
+		t.Errorf("Expected server.port 9443, got %d", cfg.Server.Port)
+	}
+	if !cfg.Server.TLS.Enabled {
+		t.Errorf("Expected TLS enabled via env override")
+	}
+	if cfg.Server.TLS.Cert != "/etc/ztna/tls/server.crt" {
+		t.Errorf("Expected tls.cert override, got %s", cfg.Server.TLS.Cert)
+	}
+	if cfg.Server.TLS.Key != "/etc/ztna/tls/server.key" {
+		t.Errorf("Expected tls.key override, got %s", cfg.Server.TLS.Key)
+	}
+	if !cfg.Auth.RateLimit.Enabled {
+		t.Errorf("Expected rate limiting enabled via env override")
+	}
+	if cfg.Auth.RateLimit.RequestsPerMinute != 60 {
+		t.Errorf("Expected rate_limit.requests_per_minute 60, got %d", cfg.Auth.RateLimit.RequestsPerMinute)
+	}
+	if cfg.Auth.RateLimit.Burst != 30 {
+		t.Errorf("Expected rate_limit.burst 30, got %d", cfg.Auth.RateLimit.Burst)
+	}
+	if cfg.Database.Path != "/var/lib/ztna/test.db" {
+		t.Errorf("Expected DB path override, got %s", cfg.Database.Path)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -71,7 +72,7 @@ func loadOrGenerateCAKey(path string, log *logger.Logger) (ssh.Signer, error) {
 	}
 
 	log.Info("Generating new SSH CA key", "path", path)
-	
+
 	// Generate Ed25519 key pair
 	_, privKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -98,11 +99,11 @@ func loadOrGenerateCAKey(path string, log *logger.Logger) (ssh.Signer, error) {
 
 	log.Info("Generated new SSH CA key", "path", path, "type", "ed25519")
 	log.Info("CA public key", "key", string(privateKeyPEM))
-	
+
 	// Print fingerprint
 	fp := ssh.FingerprintSHA256(signer.PublicKey())
 	log.Info("CA fingerprint", "fingerprint", fp)
-	
+
 	// Save CA public key for TrustedUserCAKeys
 	caPublicForSSHD := fmt.Sprintf("cert-authority %s", string(privateKeyPEM))
 	caFilePath := path + ".trustedkeys"
@@ -128,6 +129,11 @@ func encodePrivateKey(key ed25519.PrivateKey) []byte {
 
 // IssueCertificate issues a new SSH certificate
 func (ca *CA) IssueCertificate(req CertRequest) (string, error) {
+	username := strings.TrimSpace(req.Username)
+	if username == "" {
+		return "", fmt.Errorf("username is required")
+	}
+
 	// Parse user's public key
 	pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(req.PublicKey))
 	if err != nil {
@@ -138,19 +144,21 @@ func (ca *CA) IssueCertificate(req CertRequest) (string, error) {
 	validAfter := uint64(time.Now().Add(-30 * time.Second).Unix()) // Allow 30s clock skew
 	validBefore := uint64(req.ValidUntil.Unix())
 
+	validPrincipals := mergePrincipals(username, ca.principals)
+
 	// Create certificate
 	cert := &ssh.Certificate{
 		Key:             pubKey,
 		Serial:          uint64(time.Now().Unix()),
 		CertType:        ssh.UserCert,
-		KeyId:           fmt.Sprintf("ztna-%s-%d", req.Username, time.Now().Unix()),
-		ValidPrincipals: ca.principals,
+		KeyId:           username,
+		ValidPrincipals: validPrincipals,
 		ValidAfter:      validAfter,
 		ValidBefore:     validBefore,
 		Permissions: ssh.Permissions{
 			Extensions: map[string]string{
-				"permit-pty":           "",
-				"permit-user-rc":       "",
+				"permit-pty":             "",
+				"permit-user-rc":         "",
 				"permit-port-forwarding": "",
 			},
 		},
@@ -165,12 +173,37 @@ func (ca *CA) IssueCertificate(req CertRequest) (string, error) {
 	certBytes := ssh.MarshalAuthorizedKey(cert)
 
 	ca.logger.Info("Issued SSH certificate",
-		"username", req.Username,
+		"username", username,
 		"key_id", cert.KeyId,
+		"principals", validPrincipals,
 		"valid_until", req.ValidUntil.Format(time.RFC3339),
 	)
 
 	return string(certBytes), nil
+}
+
+func mergePrincipals(username string, configured []string) []string {
+	seen := make(map[string]struct{}, len(configured)+1)
+	out := make([]string, 0, len(configured)+1)
+
+	add := func(v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return
+		}
+		if _, exists := seen[v]; exists {
+			return
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+
+	add(username)
+	for _, principal := range configured {
+		add(principal)
+	}
+
+	return out
 }
 
 // Fingerprint returns the CA public key fingerprint

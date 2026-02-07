@@ -61,6 +61,11 @@ func main() {
 	defer store.Close()
 	logger.Info("Storage initialized", "type", cfg.Database.Type)
 
+	if err := store.SeedPolicies(cfg.Policies); err != nil {
+		logger.Error("Failed to seed policies", "error", err)
+		os.Exit(1)
+	}
+
 	// Initialize API server
 	apiServer := api.NewServer(cfg, ca, store, logger)
 

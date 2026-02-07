@@ -59,7 +59,11 @@ func main() {
 
 	// Initialize certificate validator
 	log.Info("Initializing certificate validator")
-	caEndpoint := "/api/v1/ca/public-key"
+	caEndpoint := cfg.ControlPlane.CAPublicKeyEndpoint
+	if caEndpoint == "" {
+		caEndpoint = "/api/v1/ca/public-key"
+		log.Warn("Control Plane CA endpoint not set, using default", "endpoint", caEndpoint)
+	}
 	certValidator, err := certvalidator.New(cpClient, caEndpoint, log)
 	if err != nil {
 		log.Error("Failed to initialize certificate validator", "error", err)

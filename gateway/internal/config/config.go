@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -90,6 +91,9 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
+	if err := applyEnvOverrides(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to apply environment overrides: %w", err)
+	}
 
 	// Validate configuration
 	if err := cfg.Validate(); err != nil {
@@ -140,4 +144,70 @@ func (c *Config) GetTarget(name string) (*TargetConfig, error) {
 		}
 	}
 	return nil, fmt.Errorf("target not found: %s", name)
+}
+
+func applyEnvOverrides(cfg *Config) error {
+	overrideString := func(env string, target *string) {
+		if value := os.Getenv(env); value != "" {
+			*target = value
+		}
+	}
+
+	overrideInt := func(env string, target *int) error {
+		value := os.Getenv(env)
+		if value == "" {
+			return nil
+		}
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("%s must be an integer: %w", env, err)
+		}
+		*target = parsed
+		return nil
+	}
+
+	overrideBool := func(env string, target *bool) error {
+		value := os.Getenv(env)
+		if value == "" {
+			return nil
+		}
+		parsed, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("%s must be a boolean: %w", env, err)
+		}
+		*target = parsed
+		return nil
+	}
+
+	// Server
+	overrideString("ZTNA_GW_SERVER_HOST", &cfg.Server.Host)
+	if err := overrideInt("ZTNA_GW_SSH_PORT", &cfg.Server.SSHPort); err != nil {
+		return err
+	}
+	if err := overrideInt("ZTNA_GW_ADMIN_PORT", &cfg.Server.AdminPort); err != nil {
+		return err
+	}
+
+	// Control Plane connectivity
+	overrideString("ZTNA_GW_CP_URL", &cfg.ControlPlane.URL)
+	overrideString("ZTNA_GW_CP_CA_ENDPOINT", &cfg.ControlPlane.CAPublicKeyEndpoint)
+	overrideString("ZTNA_GW_CP_POLICY_ENDPOINT", &cfg.ControlPlane.PolicyCheckEndpoint)
+	if err := overrideBool("ZTNA_GW_CP_TLS_SKIP_VERIFY", &cfg.ControlPlane.TLSSkipVerify); err != nil {
+		return err
+	}
+
+	// SSH
+	overrideString("ZTNA_GW_HOST_KEY_PATH", &cfg.SSH.HostKeyPath)
+	overrideString("ZTNA_GW_TRUSTED_CA_KEYS_PATH", &cfg.SSH.TrustedCAKeysPath)
+
+	// Session and logging
+	overrideString("ZTNA_GW_SESSION_TIMEOUT", &cfg.Session.Timeout)
+	if err := overrideInt("ZTNA_GW_SESSION_MAX_CONCURRENT", &cfg.Session.MaxConcurrent); err != nil {
+		return err
+	}
+	overrideString("ZTNA_GW_LOG_LEVEL", &cfg.Logging.Level)
+	overrideString("ZTNA_GW_LOG_FORMAT", &cfg.Logging.Format)
+	overrideString("ZTNA_GW_LOG_OUTPUT", &cfg.Logging.Output)
+
+	return nil
 }

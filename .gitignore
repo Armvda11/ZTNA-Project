@@ -61,6 +61,12 @@ test-results/
 control-plane/ztna-cp
 gateway/ztna-gw
 
+# Control Plane local artifacts
+control-plane/control-plane.db
+control-plane/ssh_ca
+control-plane/ssh_ca.pub
+control-plane/ssh_ca.trustedkeys
+
 # Docker
 .env
 .env.local

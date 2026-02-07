@@ -120,8 +120,8 @@ func TestDefaultUsers(t *testing.T) {
 	defer store.Close()
 
 	// Check default users exist
-	defaultUsers := []string{"alice", "bob"}
-	for _, username := range defaultUsers {
+	defaultUsers := map[string]string{"alice": "admin", "bob": "user"}
+	for username, role := range defaultUsers {
 		user, err := store.GetUserByUsername(username)
 		if err != nil {
 			t.Errorf("Default user '%s' not found: %v", username, err)
@@ -129,49 +129,12 @@ func TestDefaultUsers(t *testing.T) {
 		if user.Username != username {
 			t.Errorf("Expected username '%s', got '%s'", username, user.Username)
 		}
+		if user.Role != role {
+			t.Errorf("Expected role '%s' for user '%s', got '%s'", role, username, user.Role)
+		}
 		// Verify password is bcrypt hash, not plaintext
 		if !isBcryptHash(user.PasswordHash) {
 			t.Errorf("Expected bcrypt hash for user '%s', got: %s", username, user.PasswordHash)
 		}
-	}
-}
-
-func TestPlaintextPasswordMigration(t *testing.T) {
-	// This test verifies the automatic migration from plaintext to bcrypt hashes
-	store := setupTestStorage(t)
-	defer store.Close()
-
-	// Manually insert a plaintext password (simulating legacy data)
-	plainPassword := "legacypass123"
-	_, err := store.db.Exec(
-		"INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)",
-		"legacyuser", plainPassword, "legacy@example.com",
-	)
-	if err != nil {
-		t.Fatalf("Failed to insert legacy user: %v", err)
-	}
-
-	// First validation - should detect plaintext and auto-upgrade
-	user, err := store.ValidatePassword("legacyuser", plainPassword)
-	if err != nil {
-		t.Errorf("Expected successful validation of plaintext password, got error: %v", err)
-	}
-	if user.Username != "legacyuser" {
-		t.Errorf("Expected username 'legacyuser', got '%s'", user.Username)
-	}
-
-	// Verify the hash was upgraded to bcrypt
-	updatedUser, err := store.GetUserByUsername("legacyuser")
-	if err != nil {
-		t.Fatalf("Failed to get updated user: %v", err)
-	}
-	if !isBcryptHash(updatedUser.PasswordHash) {
-		t.Errorf("Expected bcrypt hash after migration, got: %s", updatedUser.PasswordHash)
-	}
-
-	// Second validation - should now use bcrypt comparison
-	user, err = store.ValidatePassword("legacyuser", plainPassword)
-	if err != nil {
-		t.Errorf("Expected successful validation after migration, got error: %v", err)
 	}
 }

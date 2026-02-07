@@ -38,6 +38,14 @@ log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
+detect_tls_mode() {
+    if grep -A4 -E '^[[:space:]]*tls:[[:space:]]*$' config.yaml | grep -Eq '^[[:space:]]*enabled:[[:space:]]*true([[:space:]]*#.*)?$'; then
+        echo "true"
+    else
+        echo "false"
+    fi
+}
+
 # Check main.go exists to verify we're in correct directory
 if [ ! -f "config.yaml" ]; then
     log_error "config.yaml not found. Run this script from control-plane directory."
@@ -72,7 +80,16 @@ log_success "Service restarted"
 log_info "Verifying service health..."
 sleep 2
 
-if curl -s -m 5 http://${VM_HOST}:8443/health >/dev/null 2>&1; then
+TLS_ENABLED="$(detect_tls_mode)"
+PROTOCOL="http"
+CURL_OPTS=()
+
+if [ "$TLS_ENABLED" = "true" ]; then
+    PROTOCOL="https"
+    CURL_OPTS=(-k)
+fi
+
+if curl "${CURL_OPTS[@]}" -s -m 5 "${PROTOCOL}://${VM_HOST}:8443/health" >/dev/null 2>&1; then
     log_success "Control Plane is healthy"
 else
     log_error "Health check failed"
