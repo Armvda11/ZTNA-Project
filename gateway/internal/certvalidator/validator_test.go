@@ -20,17 +20,17 @@ type mockConnMetadata struct {
 	remoteAddr net.Addr
 }
 
-func (m *mockConnMetadata) User() string                                { return m.user }
-func (m *mockConnMetadata) SessionID() []byte                           { return []byte{} }
-func (m *mockConnMetadata) ClientVersion() []byte                       { return []byte("SSH-2.0-Test") }
-func (m *mockConnMetadata) ServerVersion() []byte                       { return []byte("SSH-2.0-Gateway") }
-func (m *mockConnMetadata) RemoteAddr() net.Addr                        { return m.remoteAddr }
-func (m *mockConnMetadata) LocalAddr() net.Addr                         { return &net.TCPAddr{} }
+func (m *mockConnMetadata) User() string          { return m.user }
+func (m *mockConnMetadata) SessionID() []byte     { return []byte{} }
+func (m *mockConnMetadata) ClientVersion() []byte { return []byte("SSH-2.0-Test") }
+func (m *mockConnMetadata) ServerVersion() []byte { return []byte("SSH-2.0-Gateway") }
+func (m *mockConnMetadata) RemoteAddr() net.Addr  { return m.remoteAddr }
+func (m *mockConnMetadata) LocalAddr() net.Addr   { return &net.TCPAddr{} }
 
 // Helper to generate CA key pair
 func generateCAKeyPair(t *testing.T) (ssh.Signer, ssh.PublicKey) {
 	t.Helper()
-	
+
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("Failed to generate Ed25519 key: %v", err)
@@ -82,7 +82,7 @@ func TestValidate_NotACertificate(t *testing.T) {
 	_ = caSigner
 
 	log := logger.New(config.LoggingConfig{Level: "error", Format: "json"})
-	
+
 	validator := &Validator{
 		caPublicKey: caPublicKey,
 		logger:      log,
@@ -90,7 +90,7 @@ func TestValidate_NotACertificate(t *testing.T) {
 
 	// Use regular public key (not a certificate)
 	_, regularKey := generateUserKeyPair(t)
-	
+
 	conn := &mockConnMetadata{
 		user:       "alice",
 		remoteAddr: &net.TCPAddr{IP: net.ParseIP("10.10.10.10"), Port: 12345},
@@ -122,7 +122,7 @@ func TestValidate_ValidCertificate(t *testing.T) {
 	cert := createSignedCertificate(t, caSigner, userPubKey, "alice", []string{"alice"}, 15*time.Minute)
 
 	log := logger.New(config.LoggingConfig{Level: "info", Format: "json"})
-	
+
 	validator := &Validator{
 		caPublicKey: caPublicKey,
 		logger:      log,
@@ -166,7 +166,7 @@ func TestValidate_ExpiredCertificate(t *testing.T) {
 	cert := createSignedCertificate(t, caSigner, userPubKey, "bob", []string{"bob"}, -5*time.Second)
 
 	log := logger.New(config.LoggingConfig{Level: "error", Format: "json"})
-	
+
 	validator := &Validator{
 		caPublicKey: caPublicKey,
 		logger:      log,
@@ -203,7 +203,7 @@ func TestValidate_WrongCA(t *testing.T) {
 	cert := createSignedCertificate(t, wrongCASigner, userPubKey, "charlie", []string{"charlie"}, 15*time.Minute)
 
 	log := logger.New(config.LoggingConfig{Level: "error", Format: "json"})
-	
+
 	// Validator configured with different CA
 	validator := &Validator{
 		caPublicKey: caPublicKey, // Use the CORRECT CA, not the wrong one
@@ -237,7 +237,7 @@ func TestValidate_UsesKeyIDAsIdentity(t *testing.T) {
 	cert := createSignedCertificate(t, caSigner, userPubKey, "alice", []string{"ztna-user"}, 15*time.Minute)
 
 	log := logger.New(config.LoggingConfig{Level: "error", Format: "json"})
-	
+
 	validator := &Validator{
 		caPublicKey: caPublicKey,
 		logger:      log,
@@ -267,23 +267,23 @@ func TestValidate_UsesKeyIDAsIdentity(t *testing.T) {
 func TestGetCAFingerprint(t *testing.T) {
 	_, caPublicKey := generateCAKeyPair(t)
 	log := logger.New(config.LoggingConfig{Level: "error", Format: "json"})
-	
+
 	validator := &Validator{
 		caPublicKey: caPublicKey,
 		logger:      log,
 	}
 
 	fingerprint := validator.GetCAFingerprint()
-	
+
 	// Should be SHA256 fingerprint format
 	if len(fingerprint) < 40 {
 		t.Errorf("Fingerprint too short: %s", fingerprint)
 	}
-	
+
 	// Should start with "SHA256:"
 	if fingerprint[:7] != "SHA256:" {
 		t.Errorf("Expected fingerprint to start with 'SHA256:', got: %s", fingerprint)
 	}
-	
+
 	fmt.Printf("CA Fingerprint: %s\n", fingerprint)
 }

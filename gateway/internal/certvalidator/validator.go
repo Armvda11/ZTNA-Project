@@ -22,7 +22,7 @@ type Validator struct {
 func New(cpClient *controlplane.Client, caEndpoint string, log *logger.Logger) (*Validator, error) {
 	// Fetch CA public key from Control Plane
 	log.Info("Fetching CA public key from Control Plane", "endpoint", caEndpoint)
-	
+
 	caKeyString, err := cpClient.GetCAPublicKey(caEndpoint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get CA public key: %w", err)

@@ -41,7 +41,7 @@ func NewClient(cfg config.ControlPlaneConfig, log *logger.Logger) *Client {
 // GetCAPublicKey retrieves the CA public key from Control Plane
 func (c *Client) GetCAPublicKey(endpoint string) (string, error) {
 	url := c.baseURL + endpoint
-	
+
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
 		return "", fmt.Errorf("failed to get CA public key: %w", err)
@@ -79,7 +79,7 @@ type PolicyCheckResponse struct {
 // CheckPolicy checks if a user can access a resource
 func (c *Client) CheckPolicy(endpoint, username, resource, token string) (*PolicyCheckResponse, error) {
 	url := fmt.Sprintf("%s%s/%s", c.baseURL, endpoint, resource)
-	
+
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create policy check request: %w", err)
@@ -112,7 +112,7 @@ func (c *Client) CheckPolicy(endpoint, username, resource, token string) (*Polic
 // HealthCheck checks if the Control Plane is reachable
 func (c *Client) HealthCheck() error {
 	url := c.baseURL + "/health"
-	
+
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
 		return fmt.Errorf("health check failed: %w", err)

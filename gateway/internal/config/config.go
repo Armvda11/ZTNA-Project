@@ -27,16 +27,16 @@ type ServerConfig struct {
 
 // ControlPlaneConfig holds Control Plane connection info
 type ControlPlaneConfig struct {
-	URL                   string `yaml:"url"`
-	CAPublicKeyEndpoint   string `yaml:"ca_public_key_endpoint"`
-	PolicyCheckEndpoint   string `yaml:"policy_check_endpoint"`
-	TLSSkipVerify         bool   `yaml:"tls_skip_verify"`
+	URL                 string `yaml:"url"`
+	CAPublicKeyEndpoint string `yaml:"ca_public_key_endpoint"`
+	PolicyCheckEndpoint string `yaml:"policy_check_endpoint"`
+	TLSSkipVerify       bool   `yaml:"tls_skip_verify"`
 }
 
 // SSHConfig holds SSH server configuration
 type SSHConfig struct {
-	HostKeyPath        string `yaml:"host_key_path"`
-	TrustedCAKeysPath  string `yaml:"trusted_ca_keys_path"`
+	HostKeyPath       string `yaml:"host_key_path"`
+	TrustedCAKeysPath string `yaml:"trusted_ca_keys_path"`
 }
 
 // TargetConfig represents a backend SSH server
