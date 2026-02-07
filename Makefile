@@ -1,4 +1,4 @@
-.PHONY: help setup init plan apply destroy check logs ssh-* clean
+.PHONY: help setup init plan apply destroy check logs ssh-* clean git git-status git-start git-sync git-commit git-publish git-finish git-merge git-agent
 
 # Variables
 PROJECT_DIR := $(shell pwd)
@@ -271,6 +271,37 @@ test-network: ## Tester la connectivité réseau entre VMs
 	@ssh -o StrictHostKeyChecking=no ztna@10.10.10.10 'echo "Client WAN:" && hostname && ping -c 1 10.10.10.20 2>/dev/null && echo "Accès WAN->GW: OK" || echo "Accès WAN->GW: FAIL"'
 
 # ============================================================================
+# WORKFLOW GIT
+# ============================================================================
+
+git: ## Ouvrir l'assistant Git interactif
+	@./scripts/git-assistant.sh menu
+
+git-status: ## Afficher le statut Git enrichi
+	@./scripts/git-assistant.sh status
+
+git-start: ## Créer une branche (usage: make git-start TYPE=feat NAME=my-feature)
+	@./scripts/git-assistant.sh start "$(TYPE)" "$(NAME)"
+
+git-sync: ## Rebaser la branche courante sur main
+	@./scripts/git-assistant.sh sync
+
+git-commit: ## Commit rapide (usage: make git-commit TYPE=feat MSG="message")
+	@./scripts/git-assistant.sh commit "$(TYPE)" "$(MSG)"
+
+git-publish: ## Push la branche courante
+	@./scripts/git-assistant.sh publish
+
+git-finish: ## Préparer la branche pour PR propre
+	@./scripts/git-assistant.sh finish
+
+git-merge: ## Merge direct vers main (avec confirmation)
+	@./scripts/git-assistant.sh merge
+
+git-agent: ## Afficher un prompt à donner à un agent
+	@./scripts/git-assistant.sh agent
+
+# ============================================================================
 # ALIASES
 # ============================================================================
 
@@ -284,3 +315,4 @@ d: destroy
 c: check
 s: status
 h: help
+g: git

@@ -174,7 +174,7 @@ func loadOrGenerateHostKey(path string, log *logger.Logger) (ssh.Signer, error) 
 
 	// Generate new Ed25519 key
 	log.Info("Generating new SSH host key", "path", path)
-	
+
 	// TODO: Implement key generation (similar to Control Plane CA)
 	// For now, return error - key must be provided
 	return nil, fmt.Errorf("host key not found at %s - please generate with: ssh-keygen -t ed25519 -f %s -N ''", path, path)

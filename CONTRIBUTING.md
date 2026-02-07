@@ -90,6 +90,51 @@ git config user.email "your.email@example.com"
 
 ## Flux de Travail
 
+### Option Rapide: Assistant Git (recommandé)
+
+Pour éviter de taper beaucoup de commandes Git manuelles:
+
+```bash
+# Interface interactive colorée
+make git
+
+# Ou commandes directes
+make git-start TYPE=feat NAME=auth-cache
+make git-sync
+make git-commit TYPE=feat MSG="Add auth cache"
+make git-publish
+make git-finish
+```
+
+Commande agent-friendly:
+
+```bash
+make git-agent
+```
+
+Auto-check à l'ouverture du terminal VSCode:
+
+```bash
+./scripts/git-assistant.sh on-open
+```
+
+Vous pouvez l'attacher à un profil terminal VSCode (workspace) avec:
+
+```json
+{
+  "terminal.integrated.profiles.linux": {
+    "ZTNA Git Shell": {
+      "path": "bash",
+      "args": [
+        "-lc",
+        "cd \"${workspaceFolder}\" && ./scripts/git-assistant.sh on-open; exec bash -l"
+      ]
+    }
+  },
+  "terminal.integrated.defaultProfile.linux": "ZTNA Git Shell"
+}
+```
+
 ### 1. Créer une Branche
 
 ```bash
