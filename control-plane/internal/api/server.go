@@ -114,6 +114,13 @@ func (s *Server) setupRoutes() {
 	admin.HandleFunc("/rules/{id}", s.handleUpdatePolicyRule).Methods("PUT")
 	admin.HandleFunc("/rules/{id}", s.handleDeletePolicyRule).Methods("DELETE")
 
+	adminUsers := api.PathPrefix("/users").Subrouter()
+	adminUsers.Use(s.requireAdmin)
+	adminUsers.HandleFunc("", s.handleListUsers).Methods("GET")
+	adminUsers.HandleFunc("", s.handleCreateUser).Methods("POST")
+	adminUsers.HandleFunc("/{id}", s.handleUpdateUser).Methods("PUT")
+	adminUsers.HandleFunc("/{id}", s.handleDeleteUser).Methods("DELETE")
+
 	api.HandleFunc("/policies/{resource}", s.handleCheckPolicy).Methods("GET")
 	api.HandleFunc("/audit", s.handleAudit).Methods("GET")
 }
@@ -126,9 +133,17 @@ func (s *Server) Router() http.Handler {
 // Middleware: CORS
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			if !isOriginAllowed(origin, s.config.Server.CORS.AllowedOrigins) {
+				s.respondError(w, http.StatusForbidden, "origin not allowed")
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		}
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -137,6 +152,15 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isOriginAllowed(origin string, allowed []string) bool {
+	for _, candidate := range allowed {
+		if strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(origin)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Middleware: Logging
@@ -369,6 +393,165 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	s.respondJSON(w, http.StatusOK, map[string]interface{}{
 		"status": "revoked",
+	})
+}
+
+// Handler: List users (admin)
+func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceAPIRateLimit(w, r) {
+		return
+	}
+
+	users, err := s.storage.ListUsers()
+	if err != nil {
+		s.logger.Error("Failed to list users", "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to list users")
+		return
+	}
+
+	s.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"users": users,
+	})
+}
+
+// Handler: Create user (admin)
+func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceAPIRateLimit(w, r) {
+		return
+	}
+
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Email    string `json:"email"`
+		Role     string `json:"role"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	req.Username = strings.TrimSpace(req.Username)
+	if req.Username == "" || req.Password == "" {
+		s.respondError(w, http.StatusBadRequest, "username and password are required")
+		return
+	}
+
+	role := strings.TrimSpace(req.Role)
+	if role == "" {
+		role = "user"
+	}
+	if role != "user" && role != "admin" {
+		s.respondError(w, http.StatusBadRequest, "invalid role")
+		return
+	}
+
+	user, err := s.storage.CreateUserWithRole(req.Username, req.Password, req.Email, role)
+	if err != nil {
+		s.logger.Error("Failed to create user", "error", err)
+		s.respondError(w, http.StatusInternalServerError, "failed to create user")
+		return
+	}
+
+	_ = s.storage.LogAudit(r.Header.Get("X-Username"), "user_create", user.Username, "success", r.RemoteAddr, "")
+
+	s.respondJSON(w, http.StatusCreated, map[string]interface{}{
+		"user": map[string]interface{}{
+			"id":       user.ID,
+			"username": user.Username,
+			"role":     user.Role,
+			"email":    user.Email,
+		},
+	})
+}
+
+// Handler: Update user (admin)
+func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceAPIRateLimit(w, r) {
+		return
+	}
+
+	vars := mux.Vars(r)
+	userID, err := strconv.ParseInt(vars["id"], 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	var req struct {
+		Email    *string `json:"email"`
+		Role     *string `json:"role"`
+		Password *string `json:"password"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Role != nil {
+		role := strings.TrimSpace(*req.Role)
+		if role != "user" && role != "admin" {
+			s.respondError(w, http.StatusBadRequest, "invalid role")
+			return
+		}
+		req.Role = &role
+	}
+
+	if err := s.storage.UpdateUser(userID, storage.UserUpdateInput{
+		Email:    req.Email,
+		Role:     req.Role,
+		Password: req.Password,
+	}); err != nil {
+		s.logger.Error("Failed to update user", "error", err)
+		switch {
+		case strings.Contains(err.Error(), "not found"):
+			s.respondError(w, http.StatusNotFound, "user not found")
+		case strings.Contains(err.Error(), "no fields"):
+			s.respondError(w, http.StatusBadRequest, "no fields to update")
+		default:
+			s.respondError(w, http.StatusInternalServerError, "failed to update user")
+		}
+		return
+	}
+
+	_ = s.storage.LogAudit(r.Header.Get("X-Username"), "user_update", fmt.Sprintf("%d", userID), "success", r.RemoteAddr, "")
+
+	s.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "updated",
+		"id":     userID,
+	})
+}
+
+// Handler: Delete user (admin)
+func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceAPIRateLimit(w, r) {
+		return
+	}
+
+	vars := mux.Vars(r)
+	userID, err := strconv.ParseInt(vars["id"], 10, 64)
+	if err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+
+	if err := s.storage.DeleteUser(userID); err != nil {
+		s.logger.Error("Failed to delete user", "error", err)
+		if strings.Contains(err.Error(), "not found") {
+			s.respondError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		s.respondError(w, http.StatusInternalServerError, "failed to delete user")
+		return
+	}
+
+	_ = s.storage.LogAudit(r.Header.Get("X-Username"), "user_delete", fmt.Sprintf("%d", userID), "success", r.RemoteAddr, "")
+
+	s.respondJSON(w, http.StatusOK, map[string]interface{}{
+		"status": "deleted",
+		"id":     userID,
 	})
 }
 

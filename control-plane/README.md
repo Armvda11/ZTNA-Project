@@ -41,6 +41,12 @@ go run main.go -config /path/to/config.yaml
 
 Le serveur démarre sur `http://0.0.0.0:8443`
 
+Pour un lab TLS auto-signé :
+
+```bash
+../scripts/gen-tls-certs.sh 10.10.20.30 ztna-cp.local
+```
+
 ### 3. Tester l'API
 
 ```bash
@@ -77,6 +83,15 @@ curl -X POST http://localhost:8443/api/v1/certs/request \
 | GET | `/api/v1/audit` | Récupérer logs d'audit |
 | GET | `/api/v1/ca/public-key` | Obtenir clé publique CA |
 
+### Admin Endpoints (role=admin)
+
+| Méthode | Endpoint | Description |
+|---------|----------|-------------|
+| GET | `/api/v1/users` | Lister les utilisateurs |
+| POST | `/api/v1/users` | Créer un utilisateur |
+| PUT | `/api/v1/users/{id}` | Mettre à jour un utilisateur |
+| DELETE | `/api/v1/users/{id}` | Supprimer un utilisateur |
+
 ## Configuration
 
 Fichier `config.yaml` :
@@ -89,6 +104,9 @@ server:
     enabled: true
     cert: "/etc/ztna/tls/server.crt"
     key: "/etc/ztna/tls/server.key"
+  cors:
+    allowed_origins:
+      - "https://admin.ztna.local"
 
 auth:
   jwt_secret: "change-me"  # Override avec ZTNA_CP_JWT_SECRET
@@ -119,6 +137,10 @@ policies:
     - user: "alice"
       resources: ["lan-app", "lan-admin"]
       allowed: true
+
+### CORS (liste blanche)
+
+Définis une liste d'origines via `server.cors.allowed_origins` ou `ZTNA_CP_CORS_ALLOWED_ORIGINS` (comma-separated). Aucun wildcard n'est accepté.
 ```
 
 ## Architecture

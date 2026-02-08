@@ -33,6 +33,23 @@ type User struct {
 	UpdatedAt    time.Time
 }
 
+// UserSummary represents a safe user view for API responses
+type UserSummary struct {
+	ID        int64     `json:"id"`
+	Username  string    `json:"username"`
+	Role      string    `json:"role"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// UserUpdateInput represents updatable fields for a user
+type UserUpdateInput struct {
+	Email    *string `json:"email"`
+	Role     *string `json:"role"`
+	Password *string `json:"password"`
+}
+
 // AuditLog represents an audit log entry
 type AuditLog struct {
 	ID        int64
@@ -263,6 +280,28 @@ func (s *Storage) GetUserByUsername(username string) (*User, error) {
 	return &user, nil
 }
 
+// ListUsers returns all users without password hashes.
+func (s *Storage) ListUsers() ([]UserSummary, error) {
+	rows, err := s.db.Query(
+		"SELECT id, username, role, email, created_at, updated_at FROM users ORDER BY id",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []UserSummary
+	for rows.Next() {
+		var user UserSummary
+		if err := rows.Scan(&user.ID, &user.Username, &user.Role, &user.Email, &user.CreatedAt, &user.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan user: %w", err)
+		}
+		users = append(users, user)
+	}
+
+	return users, nil
+}
+
 // ValidatePassword validates a user's password against a bcrypt hash.
 func (s *Storage) ValidatePassword(username, password string) (*User, error) {
 	user, err := s.GetUserByUsername(username)
@@ -278,6 +317,76 @@ func (s *Storage) ValidatePassword(username, password string) (*User, error) {
 		return nil, fmt.Errorf("invalid password")
 	}
 	return user, nil
+}
+
+// UpdateUser updates mutable fields for a user.
+func (s *Storage) UpdateUser(userID int64, input UserUpdateInput) error {
+	if userID <= 0 {
+		return fmt.Errorf("invalid user id")
+	}
+
+	updates := make([]string, 0, 4)
+	args := make([]interface{}, 0, 5)
+
+	if input.Email != nil {
+		updates = append(updates, "email = ?")
+		args = append(args, *input.Email)
+	}
+	if input.Role != nil {
+		updates = append(updates, "role = ?")
+		args = append(args, *input.Role)
+	}
+	if input.Password != nil {
+		passwordHash, err := bcrypt.GenerateFromPassword([]byte(*input.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("failed to hash password: %w", err)
+		}
+		updates = append(updates, "password_hash = ?")
+		args = append(args, string(passwordHash))
+	}
+
+	if len(updates) == 0 {
+		return fmt.Errorf("no fields to update")
+	}
+
+	updates = append(updates, "updated_at = CURRENT_TIMESTAMP")
+	query := fmt.Sprintf("UPDATE users SET %s WHERE id = ?", strings.Join(updates, ", "))
+	args = append(args, userID)
+
+	result, err := s.db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to read update result: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user not found")
+	}
+
+	return nil
+}
+
+// DeleteUser deletes a user by ID.
+func (s *Storage) DeleteUser(userID int64) error {
+	if userID <= 0 {
+		return fmt.Errorf("invalid user id")
+	}
+
+	result, err := s.db.Exec("DELETE FROM users WHERE id = ?", userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to read delete result: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user not found")
+	}
+
+	return nil
 }
 
 func isBcryptHash(hash string) bool {

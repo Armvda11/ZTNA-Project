@@ -1,9 +1,11 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -22,9 +24,15 @@ type Config struct {
 
 // ServerConfig holds HTTP server configuration
 type ServerConfig struct {
-	Host string    `yaml:"host"`
-	Port int       `yaml:"port"`
-	TLS  TLSConfig `yaml:"tls"`
+	Host string     `yaml:"host"`
+	Port int        `yaml:"port"`
+	TLS  TLSConfig  `yaml:"tls"`
+	CORS CORSConfig `yaml:"cors"`
+}
+
+// CORSConfig holds CORS configuration
+type CORSConfig struct {
+	AllowedOrigins []string `yaml:"allowed_origins"`
 }
 
 // TLSConfig holds TLS certificate configuration
@@ -203,6 +211,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("tls must be enabled for control plane")
 	}
 
+	for _, origin := range c.Server.CORS.AllowedOrigins {
+		if strings.TrimSpace(origin) == "*" {
+			return fmt.Errorf("cors.allowed_origins cannot include '*'")
+		}
+	}
+
 	if c.Database.Type != "sqlite" && c.Database.Type != "postgres" {
 		return fmt.Errorf("unsupported database type: %s", c.Database.Type)
 	}
@@ -279,9 +293,29 @@ func applyEnvOverrides(cfg *Config) error {
 	overrideString("ZTNA_CP_TLS_CERT", &cfg.Server.TLS.Cert)
 	overrideString("ZTNA_CP_TLS_KEY", &cfg.Server.TLS.Key)
 
+	// CORS
+	if origins := parseCSV(os.Getenv("ZTNA_CP_CORS_ALLOWED_ORIGINS")); len(origins) > 0 {
+		cfg.Server.CORS.AllowedOrigins = origins
+	}
+
 	// SSH CA
 	overrideString("ZTNA_CP_CA_KEY_PATH", &cfg.SSH.CAKeyPath)
 	overrideString("ZTNA_CP_CERT_VALIDITY", &cfg.SSH.CertValidity)
+	if principals := parseCSV(os.Getenv("ZTNA_CP_CERT_PRINCIPALS")); len(principals) > 0 {
+		cfg.SSH.CertPrincipals = principals
+	}
+
+	// Policies
+	if err := overrideBool("ZTNA_CP_POLICIES_DEFAULT_DENY", &cfg.Policies.DefaultDeny); err != nil {
+		return err
+	}
+	if rulesJSON := os.Getenv("ZTNA_CP_POLICIES_RULES_JSON"); rulesJSON != "" {
+		var rules []PolicyRule
+		if err := json.Unmarshal([]byte(rulesJSON), &rules); err != nil {
+			return fmt.Errorf("ZTNA_CP_POLICIES_RULES_JSON must be valid JSON: %w", err)
+		}
+		cfg.Policies.Rules = rules
+	}
 
 	// Database
 	overrideString("ZTNA_CP_DB_TYPE", &cfg.Database.Type)
@@ -294,4 +328,20 @@ func applyEnvOverrides(cfg *Config) error {
 	overrideString("ZTNA_CP_LOG_OUTPUT", &cfg.Logging.Output)
 
 	return nil
+}
+
+func parseCSV(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	return out
 }

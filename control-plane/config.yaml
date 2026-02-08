@@ -7,6 +7,9 @@ server:
     enabled: true  # ENV: ZTNA_CP_TLS_ENABLED
     cert: "/etc/ztna/tls/server.crt"  # ENV: ZTNA_CP_TLS_CERT
     key: "/etc/ztna/tls/server.key"  # ENV: ZTNA_CP_TLS_KEY
+  cors:
+    allowed_origins:  # ENV: ZTNA_CP_CORS_ALLOWED_ORIGINS (comma-separated)
+      - "https://admin.ztna.local"
 
 auth:
   jwt_secret: "change-this-in-production-use-env-var"  # ENV: ZTNA_CP_JWT_SECRET (or legacy ZTNA_JWT_SECRET)
@@ -31,6 +34,7 @@ ssh:
   cert_principals:
     - "ztna-user"
     - "app-access"
+  # ENV: ZTNA_CP_CERT_PRINCIPALS (comma-separated) overrides cert_principals
 
 policies:
   default_deny: true
@@ -44,6 +48,8 @@ policies:
     - user: "attacker"
       resources: ["*"]
       allowed: false
+  # ENV: ZTNA_CP_POLICIES_DEFAULT_DENY
+  # ENV: ZTNA_CP_POLICIES_RULES_JSON (JSON array of rules)
 
 logging:
   level: "info"  # ENV: ZTNA_CP_LOG_LEVEL
