@@ -228,7 +228,7 @@ func TestValidate_WrongCA(t *testing.T) {
 	}
 }
 
-func TestValidate_UsesKeyIDAsIdentity(t *testing.T) {
+func TestValidate_RejectsMismatchedSSHUserAndKeyID(t *testing.T) {
 	// Setup
 	caSigner, caPublicKey := generateCAKeyPair(t)
 	_, userPubKey := generateUserKeyPair(t)
@@ -252,15 +252,12 @@ func TestValidate_UsesKeyIDAsIdentity(t *testing.T) {
 	// Validate
 	result, err := validator.Validate(cert, conn)
 
-	// Assert - identity is key_id, not conn user
-	if err != nil {
-		t.Errorf("Expected no error, got: %v", err)
+	// Assert - mismatch must be rejected
+	if err == nil {
+		t.Errorf("Expected error when ssh user and key_id differ")
 	}
-	if !result.Valid {
-		t.Errorf("Expected Valid to be true, got error: %s", result.Error)
-	}
-	if result.Username != "alice" {
-		t.Errorf("Expected username 'alice', got: %s", result.Username)
+	if result.Valid {
+		t.Errorf("Expected Valid to be false when ssh user and key_id differ")
 	}
 }
 

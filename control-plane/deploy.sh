@@ -30,6 +30,14 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+detect_tls_mode() {
+    if grep -A4 -E '^[[:space:]]*tls:[[:space:]]*$' config.yaml | grep -Eq '^[[:space:]]*enabled:[[:space:]]*true([[:space:]]*#.*)?$'; then
+        echo "true"
+    else
+        echo "false"
+    fi
+}
+
 # Vérifier que nous sommes dans le bon répertoire
 if [ ! -f "main.go" ]; then
     log_error "main.go not found. Run this script from control-plane directory."
@@ -42,9 +50,9 @@ GOOS=linux GOARCH=amd64 go build -o ${BINARY_NAME} main.go
 log_success "Build completed: ${BINARY_NAME}"
 
 # 2. Copier le binaire vers la VM
-log_info "Copying binary to ${VM_USER}@${VM_HOST}:${REMOTE_DIR}..."
-scp ${BINARY_NAME} ${VM_USER}@${VM_HOST}:${REMOTE_DIR}/
-log_success "Binary copied"
+log_info "Copying binary to ${VM_USER}@${VM_HOST}:/tmp..."
+scp ${BINARY_NAME} ${VM_USER}@${VM_HOST}:/tmp/${BINARY_NAME}.new
+log_success "Binary copied to /tmp"
 
 # 3. Copier la configuration
 log_info "Copying configuration..."
@@ -54,7 +62,12 @@ log_success "Configuration copied"
 # 4. Créer le service systemd et démarrer
 log_info "Setting up systemd service..."
 ssh ${VM_USER}@${VM_HOST} << 'EOF'
-# Rendre le binaire exécutable
+# Arrêter le service avant remplacement du binaire (évite text file busy)
+sudo systemctl stop ztna-cp 2>/dev/null || true
+
+# Installer le nouveau binaire de manière atomique
+chmod +x /tmp/ztna-cp.new
+mv -f /tmp/ztna-cp.new /home/ztna/ztna-cp
 chmod +x /home/ztna/ztna-cp
 
 # Créer les répertoires nécessaires
@@ -83,9 +96,6 @@ SERVICE
 # Recharger systemd
 sudo systemctl daemon-reload
 
-# Arrêter le service s'il tourne déjà
-sudo systemctl stop ztna-cp 2>/dev/null || true
-
 # Activer et démarrer le service
 sudo systemctl enable ztna-cp
 sudo systemctl start ztna-cp
@@ -103,17 +113,30 @@ log_success "Service configured and started"
 log_info "Checking service health..."
 sleep 2
 
-if curl -s http://${VM_HOST}:8443/health | grep -q "healthy"; then
+TLS_ENABLED="$(detect_tls_mode)"
+PROTOCOL="http"
+CURL_OPTS=()
+
+if [ "$TLS_ENABLED" = "true" ]; then
+    PROTOCOL="https"
+    CURL_OPTS=(-k)
+fi
+
+if curl "${CURL_OPTS[@]}" -s "${PROTOCOL}://${VM_HOST}:8443/health" | grep -q "healthy"; then
     log_success "Control Plane is healthy and running!"
     echo ""
     echo "==================================="
     echo "  ZTNA Control Plane Deployed! ✅"
     echo "==================================="
     echo ""
-    echo "API URL: http://${VM_HOST}:8443"
+    echo "API URL: ${PROTOCOL}://${VM_HOST}:8443"
     echo ""
     echo "Test with:"
-    echo "  curl http://${VM_HOST}:8443/health"
+    if [ "$TLS_ENABLED" = "true" ]; then
+        echo "  curl -k https://${VM_HOST}:8443/health"
+    else
+        echo "  curl http://${VM_HOST}:8443/health"
+    fi
     echo ""
     echo "View logs:"
     echo "  ssh ${VM_USER}@${VM_HOST} 'sudo journalctl -u ztna-cp -f'"

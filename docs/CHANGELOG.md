@@ -26,6 +26,17 @@ et ce projet adhère à [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - EditorConfig for consistent formatting
 - Pre-commit hooks for code quality
 
+## [1.1.0] - 2026-02-07
+
+### Added
+- Control Plane MVP (JWT, policies, SSH CA, audit, rate limiting)
+- E2E test coverage for Control Plane (health, auth, policies, certs, audit)
+- Requirements check script (scripts/check-requirements.sh)
+
+### Changed
+- Documentation cleanup and link fixes
+
+
 ### Infrastructure
 - KVM/QEMU hypervisor support
 - libvirt management

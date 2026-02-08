@@ -1,4 +1,4 @@
-.PHONY: help setup init plan apply destroy check logs ssh-* clean git git-status git-start git-sync git-commit git-publish git-finish git-merge git-agent
+.PHONY: help setup init up libvirt-prepare net-start names-setup names-show names-remove ssh-name health-cp plan apply destroy check logs ssh-* clean git git-status git-start git-sync git-commit git-publish git-finish git-merge git-agent
 
 # Variables
 PROJECT_DIR := $(shell pwd)
@@ -43,7 +43,7 @@ check-requirements: ## Vérifier les prérequis système
 # GESTION DE L'INFRASTRUCTURE TERRAFORM
 # ============================================================================
 
-init: terraform-init terraform-apply check ## Initialiser le lab complet (terraform + vérification)
+init: libvirt-prepare net-start terraform-init terraform-apply check ## Initialiser le lab complet (terraform + vérification)
 	@echo "$(GREEN)[✓]$(NC) Lab initialisé avec succès"
 	@echo ""
 	@echo "$(YELLOW)Prochaines étapes :$(NC)"
@@ -51,6 +51,27 @@ init: terraform-init terraform-apply check ## Initialiser le lab complet (terraf
 	@echo "  2. Se connecter au client : make ssh-client"
 	@echo "  3. Voir la documentation : cat README.md"
 	@echo ""
+
+up: ## Tout-en-un robuste: libvirt + réseaux + terraform apply + vérification
+	@bash ./scripts/lab-up.sh
+
+libvirt-prepare: ## Préparer libvirt (service + socket)
+	@echo "$(BLUE)[INFO]$(NC) Préparation libvirt..."
+	@sudo systemctl start libvirtd 2>/dev/null || true
+	@sudo chmod 666 /var/run/libvirt/libvirt-sock 2>/dev/null || true
+	@echo "$(GREEN)[✓]$(NC) libvirt prêt"
+
+net-start: ## Démarrer et activer l'autostart des réseaux du lab
+	@echo "$(BLUE)[INFO]$(NC) Activation des réseaux du lab..."
+	@for net in wan-net dmz-net lan-net; do \
+		if virsh net-info $$net >/dev/null 2>&1; then \
+			virsh net-start $$net >/dev/null 2>&1 || true; \
+			virsh net-autostart $$net >/dev/null 2>&1 || true; \
+			echo "  $(GREEN)✓$(NC) $$net actif"; \
+		else \
+			echo "  $(YELLOW)⚠$(NC) $$net absent (sera créé par Terraform)"; \
+		fi; \
+	done
 
 terraform-init: ## Initialiser Terraform (télécharger les providers)
 	@echo "$(BLUE)[INFO]$(NC) Initialisation de Terraform..."
@@ -141,6 +162,30 @@ ssh-app: ## Se connecter à lan-app (10.10.30.10)
 
 ssh-admin: ## Se connecter à lan-admin (10.10.30.11)
 	@ssh -o StrictHostKeyChecking=no ztna@10.10.30.11
+
+ssh-name: ## SSH via alias (usage: make ssh-name HOST=cp)
+	@if [ -z "$(HOST)" ]; then \
+		echo "$(RED)Erreur$(NC) : Spécifier HOST=..."; \
+		echo "Exemple : make ssh-name HOST=cp"; \
+	else \
+		ssh -o StrictHostKeyChecking=no ztna@$(HOST); \
+	fi
+
+health-cp: ## Health check CP via alias (nécessite make names-setup)
+	@curl -sk https://cp:8443/health | (command -v jq >/dev/null 2>&1 && jq . || cat)
+
+# ============================================================================
+# ALIASES NOMS / DNS LOCAL
+# ============================================================================
+
+names-setup: ## Installer les aliases ZTNA dans /etc/hosts (cp, gw, app, admin...)
+	@bash ./scripts/hosts-aliases.sh install
+
+names-show: ## Afficher les aliases ZTNA installés
+	@bash ./scripts/hosts-aliases.sh show
+
+names-remove: ## Supprimer les aliases ZTNA de /etc/hosts
+	@bash ./scripts/hosts-aliases.sh remove
 
 # ============================================================================
 # GESTION DES VMs (VIRSH)

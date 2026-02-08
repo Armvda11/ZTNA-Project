@@ -118,15 +118,11 @@ func (v *Validator) Validate(key ssh.PublicKey, connMetadata ssh.ConnMetadata) (
 		},
 	}
 
-	principal := ""
-	if len(cert.ValidPrincipals) > 0 {
-		principal = cert.ValidPrincipals[0]
-	}
+	principal := connMetadata.User()
 	if principal == "" {
-		errMsg := "certificate has no valid principals"
+		errMsg := "ssh username is required"
 		result.Error = errMsg
-		v.logger.Warn("Certificate validation failed: no principals",
-			"user", connMetadata.User(),
+		v.logger.Warn("Certificate validation failed: empty ssh username",
 			"key_id", cert.KeyId)
 		return result, fmt.Errorf("%s", errMsg)
 	}
@@ -168,9 +164,19 @@ func (v *Validator) Validate(key ssh.PublicKey, connMetadata ssh.ConnMetadata) (
 		return result, fmt.Errorf("%s", errMsg)
 	}
 
+	// Enforce a strong identity binding between certificate and requested SSH user.
+	if cert.KeyId != principal {
+		errMsg := fmt.Sprintf("certificate key_id (%s) does not match ssh user (%s)", cert.KeyId, principal)
+		result.Error = errMsg
+		v.logger.Warn("Certificate validation failed: key_id mismatch",
+			"user", principal,
+			"key_id", cert.KeyId)
+		return result, fmt.Errorf("%s", errMsg)
+	}
+
 	// 4. Extract identity and principals
 	result.Valid = true
-	result.Username = cert.KeyId
+	result.Username = principal
 	result.Principals = cert.ValidPrincipals
 	result.ValidBefore = validBefore
 	result.ValidAfter = validAfter

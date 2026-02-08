@@ -466,13 +466,13 @@ virsh net-autostart wan-net
 1. Vérifier que tout fonctionne
    ```bash
    make check
-   ./scripts/check-lab.sh
+    make check
    ```
 
 2. Consulter la documentation
    ```bash
-   cat README.md
-   cat ARCHITECTURE.md
+    cat ../README.md
+    cat ../ARCHITECTURE.md
    ```
 
 3. Développer le Control Plane et Gateway

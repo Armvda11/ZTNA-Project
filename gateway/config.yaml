@@ -1,19 +1,19 @@
 # ZTNA Gateway Configuration
 
 server:
-  host: "0.0.0.0"
-  ssh_port: 2222  # SSH proxy port
-  admin_port: 9090  # Admin/metrics port
+  host: "0.0.0.0"  # ENV: ZTNA_GW_SERVER_HOST
+  ssh_port: 2222  # ENV: ZTNA_GW_SSH_PORT
+  admin_port: 9090  # ENV: ZTNA_GW_ADMIN_PORT
 
 controlplane:
-  url: "https://10.10.20.30:8443"
-  ca_public_key_endpoint: "/api/v1/ca/public-key"
-  policy_check_endpoint: "/api/v1/policies"
-  tls_skip_verify: true  # Set to false in production with proper certs
+  url: "https://10.10.20.30:8443"  # ENV: ZTNA_GW_CP_URL
+  ca_public_key_endpoint: "/api/v1/ca/public-key"  # ENV: ZTNA_GW_CP_CA_ENDPOINT
+  policy_check_endpoint: "/api/v1/policies"  # ENV: ZTNA_GW_CP_POLICY_ENDPOINT
+  tls_skip_verify: true  # ENV: ZTNA_GW_CP_TLS_SKIP_VERIFY (false in production with valid certs)
 
 ssh:
-  host_key_path: "/etc/ztna/gateway_host_key"
-  trusted_ca_keys_path: "/etc/ztna/trusted_user_ca_keys"
+  host_key_path: "/etc/ztna/gateway_host_key"  # ENV: ZTNA_GW_HOST_KEY_PATH
+  trusted_ca_keys_path: "/etc/ztna/trusted_user_ca_keys"  # ENV: ZTNA_GW_TRUSTED_CA_KEYS_PATH
   
 routing:
   # Map resources to backend SSH servers
@@ -28,10 +28,10 @@ routing:
       user: "ztna"
 
 logging:
-  level: "info"  # debug, info, warn, error
-  format: "json"  # json or text
-  output: "stdout"  # stdout, stderr, or file path
+  level: "info"  # ENV: ZTNA_GW_LOG_LEVEL
+  format: "json"  # ENV: ZTNA_GW_LOG_FORMAT
+  output: "stdout"  # ENV: ZTNA_GW_LOG_OUTPUT
 
 session:
-  timeout: "15m"  # Session timeout (must match cert validity)
-  max_concurrent: 100  # Max concurrent sessions
+  timeout: "15m"  # ENV: ZTNA_GW_SESSION_TIMEOUT
+  max_concurrent: 100  # ENV: ZTNA_GW_SESSION_MAX_CONCURRENT

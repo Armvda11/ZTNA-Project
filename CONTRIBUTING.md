@@ -42,8 +42,8 @@ cd ZTNA
 ./setup.sh
 
 # Ou manuel
-cat REQUIREMENTS.md
-cat SETUP.md
+cat docs/REQUIREMENTS.md
+cat docs/SETUP.md
 ```
 
 ### 3. Initialiser le Lab
@@ -430,7 +430,7 @@ resource "libvirt_domain" "ztna_gw" {
 ## Installation
 
 Prerequisites:
-- Ubuntu 22.04+ (see REQUIREMENTS.md)
+- Ubuntu 22.04+ (see docs/REQUIREMENTS.md)
 - 16GB RAM minimum
 
 Steps:
@@ -506,7 +506,7 @@ ZTNA/
 ├── scripts/                    # Scripts utilitaires
 │   ├── setup.sh               # Installation
 │   ├── init-lab.sh            # Initialisation lab
-│   ├── check-lab.sh           # Vérification
+│   ├── lab-up.sh              # Tout-en-un (init + apply + check)
 │   └── cleanup.sh             # Nettoyage
 │
 ├── docs/                       # Documentation

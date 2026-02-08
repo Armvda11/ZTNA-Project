@@ -84,26 +84,12 @@ go get github.com/urfave/cli/v2
 
 ---
 
-## Dépendances Python (Optionnel - pour outils)
+## Dependances Python (optionnel)
 
-### Python 3.10+
+Python n'est pas requis pour le lab de base. Installe-le uniquement si tu ajoutes des outils annexes.
+
 ```bash
 sudo apt install -y python3 python3-pip python3-venv
-
-python3 --version
-pip3 --version
-```
-
-### Packages Python
-```bash
-pip3 install -r requirements.txt
-```
-
-Contenu de `requirements.txt` :
-```
-ansible>=2.12
-pyyaml>=6.0
-paramiko>=2.12
 ```
 
 ---
@@ -202,10 +188,10 @@ fi
 echo -e "\n=== Tous les prérequis sont satisfaits ==="
 ```
 
-Sauvegarder et exécuter :
+Utiliser le script du repo :
 ```bash
-chmod +x check-requirements.sh
-./check-requirements.sh
+chmod +x scripts/check-requirements.sh
+./scripts/check-requirements.sh
 ```
 
 ---
@@ -220,14 +206,14 @@ cd ZTNA
 # 2. Exécuter le setup (installation complète)
 ./setup.sh
 
-# 3. Vérifier les prérequis
+# 3. Verifier les prerequis
 ./scripts/check-requirements.sh
 
 # 4. Lancer l'infrastructure
 make init
 
-# 5. Vérifier le lab
-./scripts/check-lab.sh
+# 5. Verifier le lab
+make check
 ```
 
 ---
@@ -299,9 +285,9 @@ Après installation, vérifier :
 
 ## Support et Aide
 
-- Consulter [SETUP.md](SETUP.md) pour installation manuelle détaillée
-- Voir [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) pour problèmes courants
-- Lire [ARCHITECTURE.md](ARCHITECTURE.md) pour comprendre le design
+- Consulter [SETUP.md](SETUP.md) pour installation manuelle detaillee
+- Voir [../TROUBLESHOOTING.md](../TROUBLESHOOTING.md) pour problemes courants
+- Lire [../ARCHITECTURE.md](../ARCHITECTURE.md) pour comprendre le design
 
 ---
 
