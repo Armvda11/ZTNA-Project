@@ -46,7 +46,7 @@ oidc:
   jwks_cache_ttl: "10m"
   audience_mode: "aud_or_azp"
   admin_group: "ztna-admins"
-  allow_http_issuer: false  # Production: must use https:// issuer
+  allow_http_issuer: true  # Lab only: accept http:// issuer
 
 pep:
   auth_mode: token

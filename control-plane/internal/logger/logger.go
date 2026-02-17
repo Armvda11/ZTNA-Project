@@ -1,162 +1,60 @@
 package logger
 
 import (
-	"encoding/json"
-	"fmt"
-	"io"
-	"log"
+	"context"
+	"log/slog"
 	"os"
 	"strings"
-	"time"
-
-	"github.com/ztna/control-plane/internal/config"
 )
 
-// Level represents log level
-type Level int
+type ctxKey string
 
 const (
-	DebugLevel Level = iota
-	InfoLevel
-	WarnLevel
-	ErrorLevel
+	requestIDKey ctxKey = "request_id"
+	pepIDKey     ctxKey = "pep_id"
 )
 
-func (l Level) String() string {
-	switch l {
-	case DebugLevel:
-		return "DEBUG"
-	case InfoLevel:
-		return "INFO"
-	case WarnLevel:
-		return "WARN"
-	case ErrorLevel:
-		return "ERROR"
+func New(level string, format string) *slog.Logger {
+	var handler slog.Handler
+	opts := &slog.HandlerOptions{Level: parseLevel(level)}
+
+	switch strings.ToLower(format) {
+	case "text":
+		handler = slog.NewTextHandler(os.Stdout, opts)
 	default:
-		return "UNKNOWN"
+		handler = slog.NewJSONHandler(os.Stdout, opts)
 	}
+
+	return slog.New(handler)
 }
 
-// Logger provides structured logging
-type Logger struct {
-	level  Level
-	format string
-	output io.Writer
+func WithRequestID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requestIDKey, id)
 }
 
-// New creates a new logger from configuration
-func New(cfg config.LoggingConfig) *Logger {
-	level := parseLevel(cfg.Level)
-	output := parseOutput(cfg.Output)
-
-	return &Logger{
-		level:  level,
-		format: cfg.Format,
-		output: output,
-	}
+func RequestIDFromContext(ctx context.Context) string {
+	value, _ := ctx.Value(requestIDKey).(string)
+	return value
 }
 
-func parseLevel(level string) Level {
-	switch strings.ToLower(level) {
+func WithPepID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, pepIDKey, id)
+}
+
+func PepIDFromContext(ctx context.Context) string {
+	value, _ := ctx.Value(pepIDKey).(string)
+	return value
+}
+
+func parseLevel(raw string) slog.Level {
+	switch strings.ToLower(raw) {
 	case "debug":
-		return DebugLevel
-	case "info":
-		return InfoLevel
-	case "warn", "warning":
-		return WarnLevel
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
 	case "error":
-		return ErrorLevel
+		return slog.LevelError
 	default:
-		return InfoLevel
+		return slog.LevelInfo
 	}
-}
-
-func parseOutput(output string) io.Writer {
-	switch strings.ToLower(output) {
-	case "stdout", "":
-		return os.Stdout
-	case "stderr":
-		return os.Stderr
-	default:
-		// Try to open file
-		f, err := os.OpenFile(output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			log.Printf("Failed to open log file %s: %v, using stdout", output, err)
-			return os.Stdout
-		}
-		return f
-	}
-}
-
-// log writes a log message
-func (l *Logger) log(level Level, msg string, keysAndValues ...interface{}) {
-	if level < l.level {
-		return
-	}
-
-	if l.format == "json" {
-		l.logJSON(level, msg, keysAndValues...)
-	} else {
-		l.logText(level, msg, keysAndValues...)
-	}
-}
-
-func (l *Logger) logJSON(level Level, msg string, keysAndValues ...interface{}) {
-	entry := map[string]interface{}{
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-		"level":     level.String(),
-		"message":   msg,
-	}
-
-	// Add key-value pairs
-	for i := 0; i < len(keysAndValues); i += 2 {
-		if i+1 < len(keysAndValues) {
-			key := fmt.Sprint(keysAndValues[i])
-			entry[key] = keysAndValues[i+1]
-		}
-	}
-
-	data, _ := json.Marshal(entry)
-	fmt.Fprintf(l.output, "%s\n", data)
-}
-
-func (l *Logger) logText(level Level, msg string, keysAndValues ...interface{}) {
-	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	
-	extra := ""
-	if len(keysAndValues) > 0 {
-		parts := make([]string, 0, len(keysAndValues)/2)
-		for i := 0; i < len(keysAndValues); i += 2 {
-			if i+1 < len(keysAndValues) {
-				key := fmt.Sprint(keysAndValues[i])
-				val := fmt.Sprint(keysAndValues[i+1])
-				parts = append(parts, fmt.Sprintf("%s=%s", key, val))
-			}
-		}
-		if len(parts) > 0 {
-			extra = " " + strings.Join(parts, " ")
-		}
-	}
-
-	fmt.Fprintf(l.output, "[%s] %-5s %s%s\n", timestamp, level.String(), msg, extra)
-}
-
-// Debug logs a debug message
-func (l *Logger) Debug(msg string, keysAndValues ...interface{}) {
-	l.log(DebugLevel, msg, keysAndValues...)
-}
-
-// Info logs an info message
-func (l *Logger) Info(msg string, keysAndValues ...interface{}) {
-	l.log(InfoLevel, msg, keysAndValues...)
-}
-
-// Warn logs a warning message
-func (l *Logger) Warn(msg string, keysAndValues ...interface{}) {
-	l.log(WarnLevel, msg, keysAndValues...)
-}
-
-// Error logs an error message
-func (l *Logger) Error(msg string, keysAndValues ...interface{}) {
-	l.log(ErrorLevel, msg, keysAndValues...)
 }

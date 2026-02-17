@@ -1,347 +1,275 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-// Config represents the application configuration
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	Auth     AuthConfig     `yaml:"auth"`
-	API      APIConfig      `yaml:"api"`
-	SSH      SSHConfig      `yaml:"ssh"`
-	Policies PoliciesConfig `yaml:"policies"`
-	Logging  LoggingConfig  `yaml:"logging"`
-	Database DatabaseConfig `yaml:"database"`
+	Server    ServerConfig   `yaml:"server"`
+	PEPServer ServerConfig   `yaml:"pep_server"`
+	Database  DatabaseConfig `yaml:"database"`
+	OIDC      OIDCConfig     `yaml:"oidc"`
+	PEP       PEPConfig      `yaml:"pep"`
+	SSHCA     SSHCAConfig    `yaml:"sshca"`
+	Policy    PolicyConfig   `yaml:"policy"`
+	Logging   LoggingConfig  `yaml:"logging"`
 }
 
-// ServerConfig holds HTTP server configuration
 type ServerConfig struct {
-	Host string     `yaml:"host"`
-	Port int        `yaml:"port"`
-	TLS  TLSConfig  `yaml:"tls"`
-	CORS CORSConfig `yaml:"cors"`
+	Address           string    `yaml:"address"`
+	Port              int       `yaml:"port"`
+	ReadTimeout       string    `yaml:"read_timeout"`
+	WriteTimeout      string    `yaml:"write_timeout"`
+	IdleTimeout       string    `yaml:"idle_timeout"`
+	ReadHeaderTimeout string    `yaml:"read_header_timeout"`
+	TLS               TLSConfig `yaml:"tls"`
 }
 
-// CORSConfig holds CORS configuration
-type CORSConfig struct {
-	AllowedOrigins []string `yaml:"allowed_origins"`
-}
-
-// TLSConfig holds TLS certificate configuration
 type TLSConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Cert    string `yaml:"cert"`
-	Key     string `yaml:"key"`
+	Enabled           bool   `yaml:"enabled"`
+	CertFile          string `yaml:"cert_file"`
+	KeyFile           string `yaml:"key_file"`
+	ClientCAFile      string `yaml:"client_ca_file"`
+	RequireClientAuth bool   `yaml:"require_client_auth"`
 }
 
-// AuthConfig holds authentication configuration
-type AuthConfig struct {
-	JWTSecret   string          `yaml:"jwt_secret"`
-	Issuer      string          `yaml:"issuer"`
-	Audience    string          `yaml:"audience"`
-	TokenExpiry string          `yaml:"token_expiry"`
-	RefreshTTL  string          `yaml:"refresh_token_expiry"`
-	RateLimit   RateLimitConfig `yaml:"rate_limit"`
+type DatabaseConfig struct {
+	Path        string   `yaml:"path"`
+	BusyTimeout string   `yaml:"busy_timeout"`
+	Pragmas     []string `yaml:"pragmas"`
 }
 
-// APIConfig holds API security configuration
-type APIConfig struct {
-	RateLimit RateLimitConfig `yaml:"rate_limit"`
+type OIDCConfig struct {
+	Issuer          string   `yaml:"issuer"`
+	Audience        string   `yaml:"audience"`
+	UsernameClaim   string   `yaml:"username_claim"`
+	GroupsClaim     string   `yaml:"groups_claim"`
+	AllowedAlgs     []string `yaml:"allowed_algs"`
+	JWKSCacheTTL    string   `yaml:"jwks_cache_ttl"`
+	AudienceMode    string   `yaml:"audience_mode"`
+	AdminGroup      string   `yaml:"admin_group"`
+	AllowHTTPIssuer bool     `yaml:"allow_http_issuer"` // For lab: accept http:// issuer (not https://)
 }
 
-// RateLimitConfig holds login rate limiting configuration
-type RateLimitConfig struct {
-	Enabled           bool `yaml:"enabled"`
-	RequestsPerMinute int  `yaml:"requests_per_minute"`
-	Burst             int  `yaml:"burst"`
+type PEPConfig struct {
+	AuthMode string            `yaml:"auth_mode"`
+	Tokens   map[string]string `yaml:"tokens"`
 }
 
-// TokenExpiryDuration returns the token expiry as time.Duration
-func (a *AuthConfig) TokenExpiryDuration() (time.Duration, error) {
-	return time.ParseDuration(a.TokenExpiry)
+type SSHCAConfig struct {
+	KeyPath           string   `yaml:"key_path"`
+	DefaultTTL        string   `yaml:"default_ttl"`
+	MinTTL            string   `yaml:"min_ttl"`
+	MaxTTL            string   `yaml:"max_ttl"`
+	AllowedPrincipals []string `yaml:"allowed_principals"`
 }
 
-// RefreshTokenExpiryDuration returns the refresh token expiry as time.Duration
-func (a *AuthConfig) RefreshTokenExpiryDuration() (time.Duration, error) {
-	return time.ParseDuration(a.RefreshTTL)
+type PolicyConfig struct {
+	SeedFile string `yaml:"seed_file"`
 }
 
-// SSHConfig holds SSH CA configuration
-type SSHConfig struct {
-	CAKeyPath      string   `yaml:"ca_key_path"`
-	CertValidity   string   `yaml:"cert_validity"`
-	CertPrincipals []string `yaml:"cert_principals"`
-}
-
-// CertValidityDuration returns the cert validity as time.Duration
-func (s *SSHConfig) CertValidityDuration() (time.Duration, error) {
-	return time.ParseDuration(s.CertValidity)
-}
-
-// PolicyRule represents a single policy rule
-type PolicyRule struct {
-	User      string   `yaml:"user"`
-	Resources []string `yaml:"resources"`
-	Allowed   bool     `yaml:"allowed"`
-}
-
-// PoliciesConfig holds policy engine configuration
-type PoliciesConfig struct {
-	DefaultDeny bool         `yaml:"default_deny"`
-	Rules       []PolicyRule `yaml:"rules"`
-}
-
-// LoggingConfig holds logging configuration
 type LoggingConfig struct {
 	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
-	Output string `yaml:"output"`
 }
 
-// DatabaseConfig holds database configuration
-type DatabaseConfig struct {
-	Type string `yaml:"type"`
-	Path string `yaml:"path"`
-	DSN  string `yaml:"dsn"`
-}
-
-// Load reads and parses the configuration file
 func Load(path string) (*Config, error) {
-	// Try to read from specified path
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// If file doesn't exist, try local config.yaml
-		if os.IsNotExist(err) {
-			localPath := "config.yaml"
-			data, err = os.ReadFile(localPath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to read config from %s or %s: %w", path, localPath, err)
-			}
-		} else {
-			return nil, fmt.Errorf("failed to read config: %w", err)
-		}
+		return nil, fmt.Errorf("read config: %w", err)
 	}
 
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
+		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	// Override JWT secret from environment if set
-	if jwtSecret := os.Getenv("ZTNA_JWT_SECRET"); jwtSecret != "" {
-		cfg.Auth.JWTSecret = jwtSecret
-	}
-	if err := applyEnvOverrides(&cfg); err != nil {
-		return nil, fmt.Errorf("failed to apply environment overrides: %w", err)
-	}
-
-	// Validate configuration
+	applyDefaults(&cfg)
 	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
+		return nil, fmt.Errorf("validate config: %w", err)
 	}
 
 	return &cfg, nil
 }
 
-// Validate checks if the configuration is valid
 func (c *Config) Validate() error {
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
-		return fmt.Errorf("invalid server port: %d", c.Server.Port)
+		return fmt.Errorf("server.port must be 1-65535")
 	}
-
-	if c.Auth.JWTSecret == "" {
-		return fmt.Errorf("jwt_secret is required")
+	if c.OIDC.Issuer == "" {
+		return fmt.Errorf("oidc.issuer is required")
 	}
-
-	if c.Auth.Issuer == "" {
-		return fmt.Errorf("auth.issuer is required")
+	if c.OIDC.Audience == "" {
+		return fmt.Errorf("oidc.audience is required")
 	}
-
-	if c.Auth.Audience == "" {
-		return fmt.Errorf("auth.audience is required")
+	if c.OIDC.UsernameClaim == "" {
+		return fmt.Errorf("oidc.username_claim is required")
 	}
-
-	if _, err := c.Auth.TokenExpiryDuration(); err != nil {
-		return fmt.Errorf("invalid token_expiry: %w", err)
+	if len(c.OIDC.AllowedAlgs) == 0 {
+		return fmt.Errorf("oidc.allowed_algs is required")
 	}
-
-	if _, err := c.Auth.RefreshTokenExpiryDuration(); err != nil {
-		return fmt.Errorf("invalid refresh_token_expiry: %w", err)
-	}
-
-	if c.Auth.RateLimit.Enabled {
-		if c.Auth.RateLimit.RequestsPerMinute <= 0 {
-			return fmt.Errorf("auth.rate_limit.requests_per_minute must be > 0")
-		}
-		if c.Auth.RateLimit.Burst <= 0 {
-			return fmt.Errorf("auth.rate_limit.burst must be > 0")
+	for _, alg := range c.OIDC.AllowedAlgs {
+		if strings.ToUpper(strings.TrimSpace(alg)) != "RS256" {
+			return fmt.Errorf("oidc.allowed_algs must contain only RS256")
 		}
 	}
-
-	if c.API.RateLimit.Enabled {
-		if c.API.RateLimit.RequestsPerMinute <= 0 {
-			return fmt.Errorf("api.rate_limit.requests_per_minute must be > 0")
-		}
-		if c.API.RateLimit.Burst <= 0 {
-			return fmt.Errorf("api.rate_limit.burst must be > 0")
+	if c.OIDC.JWKSCacheTTL != "" {
+		if _, err := time.ParseDuration(c.OIDC.JWKSCacheTTL); err != nil {
+			return fmt.Errorf("oidc.jwks_cache_ttl invalid: %w", err)
 		}
 	}
-
-	if c.SSH.CAKeyPath == "" {
-		return fmt.Errorf("ssh ca_key_path is required")
+	if c.OIDC.AudienceMode != "" && c.OIDC.AudienceMode != "aud" && c.OIDC.AudienceMode != "aud_or_azp" {
+		return fmt.Errorf("oidc.audience_mode must be aud or aud_or_azp")
 	}
-
-	if _, err := c.SSH.CertValidityDuration(); err != nil {
-		return fmt.Errorf("invalid cert_validity: %w", err)
+	if c.Database.Path == "" {
+		return fmt.Errorf("database.path is required")
 	}
-
+	if c.SSHCA.KeyPath == "" {
+		return fmt.Errorf("sshca.key_path is required")
+	}
+	if _, err := time.ParseDuration(c.SSHCA.DefaultTTL); err != nil {
+		return fmt.Errorf("sshca.default_ttl invalid: %w", err)
+	}
+	if c.SSHCA.MinTTL != "" {
+		if _, err := time.ParseDuration(c.SSHCA.MinTTL); err != nil {
+			return fmt.Errorf("sshca.min_ttl invalid: %w", err)
+		}
+	}
+	if c.SSHCA.MaxTTL != "" {
+		if _, err := time.ParseDuration(c.SSHCA.MaxTTL); err != nil {
+			return fmt.Errorf("sshca.max_ttl invalid: %w", err)
+		}
+	}
+	if c.SSHCA.MinTTL != "" && c.SSHCA.MaxTTL != "" {
+		minTTL, _ := time.ParseDuration(c.SSHCA.MinTTL)
+		maxTTL, _ := time.ParseDuration(c.SSHCA.MaxTTL)
+		if maxTTL > 0 && minTTL > maxTTL {
+			return fmt.Errorf("sshca.min_ttl must be <= max_ttl")
+		}
+	}
+	if c.PEP.AuthMode != "token" && c.PEP.AuthMode != "mtls" {
+		return fmt.Errorf("pep.auth_mode must be token or mtls")
+	}
+	if c.PEP.AuthMode == "token" && len(c.PEP.Tokens) == 0 {
+		return fmt.Errorf("pep.tokens required for token auth")
+	}
 	if c.Server.TLS.Enabled {
-		if c.Server.TLS.Cert == "" || c.Server.TLS.Key == "" {
-			return fmt.Errorf("tls enabled but cert or key is empty")
-		}
-	} else {
-		return fmt.Errorf("tls must be enabled for control plane")
-	}
-
-	for _, origin := range c.Server.CORS.AllowedOrigins {
-		if strings.TrimSpace(origin) == "*" {
-			return fmt.Errorf("cors.allowed_origins cannot include '*'")
+		if c.Server.TLS.CertFile == "" || c.Server.TLS.KeyFile == "" {
+			return fmt.Errorf("server.tls cert_file and key_file are required")
 		}
 	}
-
-	if c.Database.Type != "sqlite" && c.Database.Type != "postgres" {
-		return fmt.Errorf("unsupported database type: %s", c.Database.Type)
+	if c.PEP.AuthMode == "mtls" {
+		if c.PEPServer.Port < 1 || c.PEPServer.Port > 65535 {
+			return fmt.Errorf("pep_server.port must be 1-65535")
+		}
+		if !c.PEPServer.TLS.Enabled {
+			return fmt.Errorf("pep_server.tls.enabled must be true when pep.auth_mode=mtls")
+		}
+		if c.PEPServer.TLS.CertFile == "" || c.PEPServer.TLS.KeyFile == "" {
+			return fmt.Errorf("pep_server.tls cert_file and key_file are required when pep.auth_mode=mtls")
+		}
+		if c.PEPServer.TLS.ClientCAFile == "" {
+			return fmt.Errorf("pep_server.tls.client_ca_file is required when pep.auth_mode=mtls")
+		}
 	}
-
 	return nil
 }
 
-func applyEnvOverrides(cfg *Config) error {
-	overrideString := func(env string, target *string) {
-		if value := os.Getenv(env); value != "" {
-			*target = value
-		}
-	}
-
-	overrideInt := func(env string, target *int) error {
-		value := os.Getenv(env)
-		if value == "" {
-			return nil
-		}
-		parsed, err := strconv.Atoi(value)
-		if err != nil {
-			return fmt.Errorf("%s must be an integer: %w", env, err)
-		}
-		*target = parsed
-		return nil
-	}
-
-	overrideBool := func(env string, target *bool) error {
-		value := os.Getenv(env)
-		if value == "" {
-			return nil
-		}
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("%s must be a boolean: %w", env, err)
-		}
-		*target = parsed
-		return nil
-	}
-
-	// Auth and security-sensitive values
-	overrideString("ZTNA_CP_JWT_SECRET", &cfg.Auth.JWTSecret)
-	overrideString("ZTNA_CP_JWT_ISSUER", &cfg.Auth.Issuer)
-	overrideString("ZTNA_CP_JWT_AUDIENCE", &cfg.Auth.Audience)
-	overrideString("ZTNA_CP_TOKEN_EXPIRY", &cfg.Auth.TokenExpiry)
-	overrideString("ZTNA_CP_REFRESH_TOKEN_EXPIRY", &cfg.Auth.RefreshTTL)
-	if err := overrideBool("ZTNA_CP_RATE_LIMIT_ENABLED", &cfg.Auth.RateLimit.Enabled); err != nil {
-		return err
-	}
-	if err := overrideInt("ZTNA_CP_RATE_LIMIT_RPM", &cfg.Auth.RateLimit.RequestsPerMinute); err != nil {
-		return err
-	}
-	if err := overrideInt("ZTNA_CP_RATE_LIMIT_BURST", &cfg.Auth.RateLimit.Burst); err != nil {
-		return err
-	}
-	if err := overrideBool("ZTNA_CP_API_RATE_LIMIT_ENABLED", &cfg.API.RateLimit.Enabled); err != nil {
-		return err
-	}
-	if err := overrideInt("ZTNA_CP_API_RATE_LIMIT_RPM", &cfg.API.RateLimit.RequestsPerMinute); err != nil {
-		return err
-	}
-	if err := overrideInt("ZTNA_CP_API_RATE_LIMIT_BURST", &cfg.API.RateLimit.Burst); err != nil {
-		return err
-	}
-
-	// Server/TLS
-	overrideString("ZTNA_CP_SERVER_HOST", &cfg.Server.Host)
-	if err := overrideInt("ZTNA_CP_SERVER_PORT", &cfg.Server.Port); err != nil {
-		return err
-	}
-	if err := overrideBool("ZTNA_CP_TLS_ENABLED", &cfg.Server.TLS.Enabled); err != nil {
-		return err
-	}
-	overrideString("ZTNA_CP_TLS_CERT", &cfg.Server.TLS.Cert)
-	overrideString("ZTNA_CP_TLS_KEY", &cfg.Server.TLS.Key)
-
-	// CORS
-	if origins := parseCSV(os.Getenv("ZTNA_CP_CORS_ALLOWED_ORIGINS")); len(origins) > 0 {
-		cfg.Server.CORS.AllowedOrigins = origins
-	}
-
-	// SSH CA
-	overrideString("ZTNA_CP_CA_KEY_PATH", &cfg.SSH.CAKeyPath)
-	overrideString("ZTNA_CP_CERT_VALIDITY", &cfg.SSH.CertValidity)
-	if principals := parseCSV(os.Getenv("ZTNA_CP_CERT_PRINCIPALS")); len(principals) > 0 {
-		cfg.SSH.CertPrincipals = principals
-	}
-
-	// Policies
-	if err := overrideBool("ZTNA_CP_POLICIES_DEFAULT_DENY", &cfg.Policies.DefaultDeny); err != nil {
-		return err
-	}
-	if rulesJSON := os.Getenv("ZTNA_CP_POLICIES_RULES_JSON"); rulesJSON != "" {
-		var rules []PolicyRule
-		if err := json.Unmarshal([]byte(rulesJSON), &rules); err != nil {
-			return fmt.Errorf("ZTNA_CP_POLICIES_RULES_JSON must be valid JSON: %w", err)
-		}
-		cfg.Policies.Rules = rules
-	}
-
-	// Database
-	overrideString("ZTNA_CP_DB_TYPE", &cfg.Database.Type)
-	overrideString("ZTNA_CP_DB_PATH", &cfg.Database.Path)
-	overrideString("ZTNA_CP_DB_DSN", &cfg.Database.DSN)
-
-	// Logging
-	overrideString("ZTNA_CP_LOG_LEVEL", &cfg.Logging.Level)
-	overrideString("ZTNA_CP_LOG_FORMAT", &cfg.Logging.Format)
-	overrideString("ZTNA_CP_LOG_OUTPUT", &cfg.Logging.Output)
-
-	return nil
+func (c *Config) BusyTimeout() time.Duration {
+	return parseDurationOrDefault(c.Database.BusyTimeout, 5*time.Second)
 }
 
-func parseCSV(value string) []string {
-	if strings.TrimSpace(value) == "" {
-		return nil
+func applyDefaults(cfg *Config) {
+	applyServerDefaults(&cfg.Server, 8080)
+	if cfg.Database.BusyTimeout == "" {
+		cfg.Database.BusyTimeout = "5s"
 	}
-	parts := strings.Split(value, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
-		if trimmed == "" {
-			continue
+	if cfg.OIDC.GroupsClaim == "" {
+		cfg.OIDC.GroupsClaim = "groups"
+	}
+	if len(cfg.OIDC.AllowedAlgs) == 0 {
+		cfg.OIDC.AllowedAlgs = []string{"RS256"}
+	}
+	if cfg.OIDC.JWKSCacheTTL == "" {
+		cfg.OIDC.JWKSCacheTTL = "10m"
+	}
+	if cfg.OIDC.AudienceMode == "" {
+		cfg.OIDC.AudienceMode = "aud"
+	}
+	if cfg.PEP.AuthMode == "" {
+		cfg.PEP.AuthMode = "token"
+	}
+	if cfg.PEP.AuthMode == "mtls" {
+		applyServerDefaults(&cfg.PEPServer, 8443)
+		cfg.PEPServer.TLS.Enabled = true
+		cfg.PEPServer.TLS.RequireClientAuth = true
+		if cfg.PEPServer.TLS.CertFile == "" {
+			cfg.PEPServer.TLS.CertFile = cfg.Server.TLS.CertFile
 		}
-		out = append(out, trimmed)
+		if cfg.PEPServer.TLS.KeyFile == "" {
+			cfg.PEPServer.TLS.KeyFile = cfg.Server.TLS.KeyFile
+		}
+		if cfg.PEPServer.TLS.ClientCAFile == "" {
+			cfg.PEPServer.TLS.ClientCAFile = cfg.Server.TLS.ClientCAFile
+		}
 	}
-	return out
+	if cfg.Logging.Level == "" {
+		cfg.Logging.Level = "info"
+	}
+	if cfg.Logging.Format == "" {
+		cfg.Logging.Format = "json"
+	}
+}
+
+func parseDurationOrDefault(raw string, fallback time.Duration) time.Duration {
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func applyServerDefaults(server *ServerConfig, defaultPort int) {
+	if server.Address == "" {
+		server.Address = "0.0.0.0"
+	}
+	if server.Port == 0 {
+		server.Port = defaultPort
+	}
+	if server.ReadTimeout == "" {
+		server.ReadTimeout = "10s"
+	}
+	if server.WriteTimeout == "" {
+		server.WriteTimeout = "10s"
+	}
+	if server.IdleTimeout == "" {
+		server.IdleTimeout = "60s"
+	}
+	if server.ReadHeaderTimeout == "" {
+		server.ReadHeaderTimeout = "5s"
+	}
+}
+
+func (s ServerConfig) ReadTimeoutDuration() time.Duration {
+	return parseDurationOrDefault(s.ReadTimeout, 10*time.Second)
+}
+
+func (s ServerConfig) WriteTimeoutDuration() time.Duration {
+	return parseDurationOrDefault(s.WriteTimeout, 10*time.Second)
+}
+
+func (s ServerConfig) IdleTimeoutDuration() time.Duration {
+	return parseDurationOrDefault(s.IdleTimeout, 60*time.Second)
+}
+
+func (s ServerConfig) ReadHeaderTimeoutDuration() time.Duration {
+	return parseDurationOrDefault(s.ReadHeaderTimeout, 5*time.Second)
 }

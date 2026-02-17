@@ -1,0 +1,12 @@
+created_by: seed
+rules:
+  - effect: allow
+    subject_match: group:ztna-admins
+    action: connect
+    resource_type: ssh
+    resource_match: "ssh:lan-app:22"
+  - effect: deny
+    subject_match: "*"
+    action: "*"
+    resource_type: "*"
+    resource_match: "*"
