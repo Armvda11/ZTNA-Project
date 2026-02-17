@@ -1,4 +1,4 @@
-# Bridges KVM (libvirt networks)
+# Bridges KVM (libvirt networks) - Architecture simplifiée
 
 resource "libvirt_network" "wan" {
   name      = var.wan_net_name
@@ -7,13 +7,13 @@ resource "libvirt_network" "wan" {
   autostart = true
 
   dhcp {
-    enabled = true
+    enabled = false  # IPs statiques via cloud-init
   }
 }
 
 resource "libvirt_network" "dmz" {
   name      = var.dmz_net_name
-  mode      = "none"
+  mode      = "nat"  # Accessible depuis PC pour déploiement facile
   addresses = [var.dmz_cidr]
   autostart = true
 
@@ -24,7 +24,7 @@ resource "libvirt_network" "dmz" {
 
 resource "libvirt_network" "lan" {
   name      = var.lan_net_name
-  mode      = "none"
+  mode      = "none"  # Isolé, accès via ztna-gw seulement
   addresses = [var.lan_cidr]
   autostart = true
 

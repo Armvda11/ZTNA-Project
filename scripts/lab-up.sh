@@ -68,8 +68,14 @@ final_check() {
   make check
 }
 
+deploy_control_plane() {
+  log_info "Déploiement du Control Plane + Keycloak sur ztna-cp..."
+  bash "${ROOT_DIR}/scripts/lab-deploy-cp-via-wan.sh"
+  log_ok "Control Plane + Keycloak déployés"
+}
+
 main() {
-  log_info "ZTNA Lab UP (tout-en-un)"
+  log_info "ZTNA Lab UP (infra seulement)"
   ensure_prereqs
   prepare_libvirt
   start_known_networks
@@ -77,8 +83,21 @@ main() {
   start_known_networks
   start_known_vms
   sleep 10
+  
+  # Fix routes manuellement (cloud-init ne marche pas bien)
+  log_info "Configuration des routes et IP forwarding..."
+  ssh -o StrictHostKeyChecking=no ztna@10.10.10.20 "sudo sysctl -w net.ipv4.ip_forward=1" || true
+  ssh -o StrictHostKeyChecking=no ztna@10.10.10.10 "sudo ip route add 10.10.20.0/24 via 10.10.10.20 2>/dev/null || true && sudo ip route add 10.10.30.0/24 via 10.10.10.20 2>/dev/null || true" || true
+  ssh -o StrictHostKeyChecking=no ztna@10.10.10.11 "sudo ip route add 10.10.20.0/24 via 10.10.10.20 2>/dev/null || true && sudo ip route add 10.10.30.0/24 via 10.10.10.20 2>/dev/null || true" || true
+  
   final_check
-  log_ok "Lab prêt. Utilise: make ssh-client / make ssh-gw / make ssh-cp"
+  
+  log_ok "Lab VMs prêtes"
+  log_info ""
+  log_info "Pour déployer le control-plane:"
+  log_info "  1. make ssh-client"
+  log_info "  2. bash /tmp/deploy-ztna-cp.sh"
+  log_info ""
 }
 
 main "$@"

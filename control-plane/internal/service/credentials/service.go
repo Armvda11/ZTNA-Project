@@ -26,9 +26,9 @@ func New(ca *sshca.CA, cfg config.SSHCAConfig, db *sqlite.Store) *Service {
 }
 
 type IssueRequest struct {
-	Subject   model.Subject
-	PublicKey string
-	TTL       *time.Duration
+	Subject    model.Subject
+	PublicKey  string
+	TTL        *time.Duration
 	Principals []string
 }
 

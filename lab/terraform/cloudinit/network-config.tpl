@@ -8,6 +8,13 @@ ethernets:
 %{ if iface.gateway != "" ~}
     gateway4: ${iface.gateway}
 %{ endif ~}
+%{ if length(lookup(iface, "routes", [])) > 0 ~}
+    routes:
+%{ for route in iface.routes ~}
+      - to: ${route.to}
+        via: ${route.via}
+%{ endfor ~}
+%{ endif ~}
     nameservers:
       addresses:
         - ${iface.dns}
