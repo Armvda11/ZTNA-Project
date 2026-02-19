@@ -1,0 +1,14 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:21.0.0
+    command:
+      - start-dev
+      - --import-realm
+      - --http-port=8081
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin123
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./realm-ztna.json:/opt/keycloak/data/import/realm-ztna.json:ro

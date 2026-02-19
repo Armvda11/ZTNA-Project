@@ -1,63 +1,65 @@
-# ZTNA Control Plane Configuration
-
 server:
-  host: "0.0.0.0"  # ENV: ZTNA_CP_SERVER_HOST
-  port: 8443  # ENV: ZTNA_CP_SERVER_PORT
+  address: 0.0.0.0
+  port: 8080
+  read_timeout: 10s
+  write_timeout: 10s
+  idle_timeout: 60s
+  read_header_timeout: 5s
   tls:
-    enabled: true  # ENV: ZTNA_CP_TLS_ENABLED
-    cert: "/etc/ztna/tls/server.crt"  # ENV: ZTNA_CP_TLS_CERT
-    key: "/etc/ztna/tls/server.key"  # ENV: ZTNA_CP_TLS_KEY
-  cors:
-    allowed_origins:  # ENV: ZTNA_CP_CORS_ALLOWED_ORIGINS (comma-separated)
-      - "https://admin.ztna.local"
+    enabled: true
+    cert_file: ./certs/server.crt
+    key_file: ./certs/server.key
+    client_ca_file: ./certs/ca.crt
+    require_client_auth: false
 
-auth:
-  jwt_secret: "change-this-in-production-use-env-var"  # ENV: ZTNA_CP_JWT_SECRET (or legacy ZTNA_JWT_SECRET)
-  issuer: "ztna-cp"  # ENV: ZTNA_CP_JWT_ISSUER
-  audience: "ztna-clients"  # ENV: ZTNA_CP_JWT_AUDIENCE
-  token_expiry: "15m"  # ENV: ZTNA_CP_TOKEN_EXPIRY
-  refresh_token_expiry: "24h"  # ENV: ZTNA_CP_REFRESH_TOKEN_EXPIRY
-  rate_limit:
-    enabled: true  # ENV: ZTNA_CP_RATE_LIMIT_ENABLED
-    requests_per_minute: 5  # ENV: ZTNA_CP_RATE_LIMIT_RPM
-    burst: 10  # ENV: ZTNA_CP_RATE_LIMIT_BURST
-
-api:
-  rate_limit:
-    enabled: true  # ENV: ZTNA_CP_API_RATE_LIMIT_ENABLED
-    requests_per_minute: 60  # ENV: ZTNA_CP_API_RATE_LIMIT_RPM
-    burst: 30  # ENV: ZTNA_CP_API_RATE_LIMIT_BURST
-
-ssh:
-  ca_key_path: "/etc/ztna/ssh_ca"  # ENV: ZTNA_CP_CA_KEY_PATH
-  cert_validity: "15m"  # ENV: ZTNA_CP_CERT_VALIDITY
-  cert_principals:
-    - "ztna-user"
-    - "app-access"
-  # ENV: ZTNA_CP_CERT_PRINCIPALS (comma-separated) overrides cert_principals
-
-policies:
-  default_deny: true
-  rules:
-    - user: "alice"
-      resources: ["lan-app", "lan-admin"]
-      allowed: true
-    - user: "bob"
-      resources: ["lan-app"]
-      allowed: true
-    - user: "attacker"
-      resources: ["*"]
-      allowed: false
-  # ENV: ZTNA_CP_POLICIES_DEFAULT_DENY
-  # ENV: ZTNA_CP_POLICIES_RULES_JSON (JSON array of rules)
-
-logging:
-  level: "info"  # ENV: ZTNA_CP_LOG_LEVEL
-  format: "json"  # ENV: ZTNA_CP_LOG_FORMAT
-  output: "stdout"  # ENV: ZTNA_CP_LOG_OUTPUT
+pep_server:
+  address: 0.0.0.0
+  port: 8443
+  read_timeout: 10s
+  write_timeout: 10s
+  idle_timeout: 60s
+  read_header_timeout: 5s
+  tls:
+    enabled: true
+    cert_file: ./certs/server.crt
+    key_file: ./certs/server.key
+    client_ca_file: ./certs/ca.crt
+    require_client_auth: true
 
 database:
-  type: "sqlite"  # ENV: ZTNA_CP_DB_TYPE
-  path: "/var/lib/ztna/control-plane.db"  # ENV: ZTNA_CP_DB_PATH
-  # For postgres:
-  # dsn: "postgres://user:pass@localhost:5432/ztna"  # ENV: ZTNA_CP_DB_DSN
+  path: ./control-plane.db
+  busy_timeout: 5s
+  pragmas:
+    - journal_mode = WAL
+    - synchronous = NORMAL
+
+logging:
+  level: info
+  format: json
+
+oidc:
+  issuer: "http://10.10.20.30:8081/realms/ztna"
+  audience: "ztna-control-plane"
+  username_claim: "preferred_username"
+  groups_claim: "groups"
+  allowed_algs: ["RS256"]
+  jwks_cache_ttl: "10m"
+  audience_mode: "aud_or_azp"
+  admin_group: "ztna-admins"
+  allow_http_issuer: false  # Production: must use https:// issuer
+
+pep:
+  auth_mode: token
+  tokens:
+    ztna-gw-1: "CHANGE_ME_LONG_RANDOM"
+
+sshca:
+  key_path: ./ssh_ca
+  default_ttl: 15m
+  min_ttl: 1m
+  max_ttl: 1h
+  allowed_principals:
+    - "${username}"
+
+policy:
+  seed_file: ./policies.yaml

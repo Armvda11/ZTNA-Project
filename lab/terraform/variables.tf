@@ -73,20 +73,20 @@ variable "vm_medium_cpu" {
   default = 2
 }
 
-# Plan IP
+# Plan IP - Architecture simplifiée
 variable "wan_gateway" {
   type    = string
   default = "10.10.10.1"
 }
 
+variable "dmz_gateway" {
+  type    = string
+  default = "10.10.20.1"
+}
+
 variable "wan_client_ip" {
   type    = string
   default = "10.10.10.10"
-}
-
-variable "wan_attacker_ip" {
-  type    = string
-  default = "10.10.10.11"
 }
 
 variable "ztna_gw_wan_ip" {
@@ -97,6 +97,11 @@ variable "ztna_gw_wan_ip" {
 variable "ztna_gw_dmz_ip" {
   type    = string
   default = "10.10.20.20"
+}
+
+variable "ztna_gw_lan_ip" {
+  type    = string
+  default = "10.10.30.20"
 }
 
 variable "ztna_cp_ip" {

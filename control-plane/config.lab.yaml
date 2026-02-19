@@ -1,0 +1,65 @@
+server:
+  address: 0.0.0.0
+  port: 8080
+  read_timeout: 10s
+  write_timeout: 10s
+  idle_timeout: 60s
+  read_header_timeout: 5s
+  tls:
+    enabled: true
+    cert_file: ./certs/server.crt
+    key_file: ./certs/server.key
+    client_ca_file: ./certs/ca.crt
+    require_client_auth: false
+
+pep_server:
+  address: 0.0.0.0
+  port: 8443
+  read_timeout: 10s
+  write_timeout: 10s
+  idle_timeout: 60s
+  read_header_timeout: 5s
+  tls:
+    enabled: true
+    cert_file: ./certs/server.crt
+    key_file: ./certs/server.key
+    client_ca_file: ./certs/ca.crt
+    require_client_auth: true
+
+database:
+  path: ./control-plane.db
+  busy_timeout: 5s
+  pragmas:
+    - journal_mode = WAL
+    - synchronous = NORMAL
+
+logging:
+  level: info
+  format: json
+
+oidc:
+  issuer: "http://10.10.20.30:8081/realms/ztna"
+  audience: "ztna-control-plane"
+  username_claim: "preferred_username"
+  groups_claim: "groups"
+  allowed_algs: ["RS256"]
+  jwks_cache_ttl: "10m"
+  audience_mode: "aud_or_azp"
+  admin_group: "ztna-admins"
+  allow_http_issuer: true  # Lab only: accept http:// issuer
+
+pep:
+  auth_mode: token
+  tokens:
+    ztna-gw-1: "CHANGE_ME_LONG_RANDOM"
+
+sshca:
+  key_path: ./ssh_ca
+  default_ttl: 15m
+  min_ttl: 1m
+  max_ttl: 1h
+  allowed_principals:
+    - "${username}"
+
+policy:
+  seed_file: ./policies.yaml
