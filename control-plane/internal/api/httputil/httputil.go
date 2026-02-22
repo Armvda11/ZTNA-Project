@@ -3,10 +3,10 @@
 package httputil
 
 import (
-"encoding/json"
-"net/http"
+	"encoding/json"
+	"net/http"
 
-domainErrors "control-plane/internal/domain/errors"
+	domainErrors "control-plane/internal/domain/errors"
 )
 
 // ErrorResponse is the canonical JSON error envelope.

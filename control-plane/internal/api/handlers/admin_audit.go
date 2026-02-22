@@ -50,4 +50,3 @@ func (h *AdminAuditHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, events)
 }
-

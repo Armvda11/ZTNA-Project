@@ -2,12 +2,12 @@
 package pep
 
 import (
-"bytes"
-"context"
-"encoding/json"
-"fmt"
-"net/http"
-"time"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
 )
 
 // Client calls the Control Plane PEP endpoint.
@@ -75,7 +75,7 @@ func (c *Client) Authorize(ctx context.Context, req AuthorizeRequest) (Authorize
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-c.cpURL+"/api/v1/pep/authorize", bytes.NewReader(body))
+		c.cpURL+"/api/v1/pep/authorize", bytes.NewReader(body))
 	if err != nil {
 		return AuthorizeResponse{}, fmt.Errorf("build authorize request: %w", err)
 	}
@@ -110,7 +110,7 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-c.cpURL+"/api/v1/pep/heartbeat", nil)
+		c.cpURL+"/api/v1/pep/heartbeat", nil)
 	if err != nil {
 		return err
 	}

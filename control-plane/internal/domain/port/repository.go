@@ -3,9 +3,9 @@
 package port
 
 import (
-"context"
+	"context"
 
-"control-plane/internal/domain/model"
+	"control-plane/internal/domain/model"
 )
 
 // UserRepository persists user identity records.

@@ -1,16 +1,16 @@
 package deviceca
 
 import (
-"crypto/rand"
-"crypto/rsa"
-"crypto/x509"
-"crypto/x509/pkix"
-"encoding/pem"
-"math/big"
-"os"
-"path/filepath"
-"testing"
-"time"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
 )
 
 func generateTestCSR(t *testing.T) []byte {
@@ -105,13 +105,13 @@ func TestSignClientCSR_ProducesValidCert(t *testing.T) {
 
 	csrPEM := generateTestCSR(t)
 	certPEM, fingerprint, err := ca.SignClientCSR(
-csrPEM,
-"alice",
-"sub-abc-123",
-[]string{"admins", "devs"},
-24*time.Hour,
-[]string{"rsa", "ecdsa"},
-)
+		csrPEM,
+		"alice",
+		"sub-abc-123",
+		[]string{"admins", "devs"},
+		24*time.Hour,
+		[]string{"rsa", "ecdsa"},
+	)
 	if err != nil {
 		t.Fatalf("SignClientCSR: %v", err)
 	}
@@ -149,9 +149,9 @@ csrPEM,
 	pool := x509.NewCertPool()
 	pool.AddCert(parseCACert(t, ca.CACertPEM()))
 	if _, err := cert.Verify(x509.VerifyOptions{
-Roots:     pool,
-KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-}); err != nil {
+		Roots:     pool,
+		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}); err != nil {
 		t.Errorf("cert verification against CA failed: %v", err)
 	}
 }
@@ -165,13 +165,13 @@ func TestSignClientCSR_RejectsUnknownKeyType(t *testing.T) {
 
 	csrPEM := generateTestCSR(t)
 	_, _, err = ca.SignClientCSR(
-csrPEM,
-"alice",
-"sub-1",
-nil,
-24*time.Hour,
-[]string{"ecdsa"},
-)
+		csrPEM,
+		"alice",
+		"sub-1",
+		nil,
+		24*time.Hour,
+		[]string{"ecdsa"},
+	)
 	if err == nil {
 		t.Fatal("expected error for disallowed RSA key, got nil")
 	}

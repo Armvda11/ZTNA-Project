@@ -27,20 +27,20 @@ type Server struct {
 }
 
 type Dependencies struct {
-	CredentialsHandler    *handlers.CredentialsHandler
-	DeviceCertHandler     *handlers.DeviceCertHandler
-	PKIHandler            *handlers.PKIHandler
-	AdminDeviceCerts      *handlers.AdminDeviceCertsHandler
-	PEPHandler            *handlers.PEPHandler
-	PEPHeartbeatHandler   *handlers.PEPHeartbeatHandler
-	AdminPolicies         *handlers.AdminPoliciesHandler
-	AdminAudit            *handlers.AdminAuditHandler
-	WhoamiHandler         *handlers.WhoamiHandler
-	OIDC                  *middleware.OIDCValidator
-	PEPAuth               *middleware.PEPAuth
-	AdminAuth             *middleware.AdminAuth
-	PublicRateLimiter     *middleware.RateLimiter
-	PEPRateLimiter        *middleware.RateLimiter
+	CredentialsHandler  *handlers.CredentialsHandler
+	DeviceCertHandler   *handlers.DeviceCertHandler
+	PKIHandler          *handlers.PKIHandler
+	AdminDeviceCerts    *handlers.AdminDeviceCertsHandler
+	PEPHandler          *handlers.PEPHandler
+	PEPHeartbeatHandler *handlers.PEPHeartbeatHandler
+	AdminPolicies       *handlers.AdminPoliciesHandler
+	AdminAudit          *handlers.AdminAuditHandler
+	WhoamiHandler       *handlers.WhoamiHandler
+	OIDC                *middleware.OIDCValidator
+	PEPAuth             *middleware.PEPAuth
+	AdminAuth           *middleware.AdminAuth
+	PublicRateLimiter   *middleware.RateLimiter
+	PEPRateLimiter      *middleware.RateLimiter
 }
 
 func New(cfg *config.Config, deps Dependencies) (*Server, error) {

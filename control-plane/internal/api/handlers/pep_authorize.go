@@ -58,10 +58,10 @@ type resourceHostPort struct {
 //
 // Les helpers resolvedHost / resolvedPort normalisent les deux formes.
 type resourceRequest struct {
-	Type string            `json:"type"`
+	Type string `json:"type"`
 	// Flat fields (legacy / simple format)
-	Host string            `json:"host,omitempty"`
-	Port int               `json:"port,omitempty"`
+	Host string `json:"host,omitempty"`
+	Port int    `json:"port,omitempty"`
 	// Structured sub-objects (gateway format)
 	SSH  *resourceHostPort `json:"ssh,omitempty"`
 	HTTP *resourceHostPort `json:"http,omitempty"`

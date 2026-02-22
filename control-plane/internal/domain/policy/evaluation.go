@@ -3,10 +3,10 @@
 package policy
 
 import (
-"fmt"
-"strings"
+	"fmt"
+	"strings"
 
-"control-plane/internal/domain/model"
+	"control-plane/internal/domain/model"
 )
 
 // EvaluationEngine evaluates a PolicySnapshot against an access request.
@@ -20,10 +20,10 @@ func NewEvaluationEngine() *EvaluationEngine {
 // Evaluate returns the decision effect and the human-readable reason for
 // the first matching rule. If no rule matches, a default-deny is returned.
 func (e *EvaluationEngine) Evaluate(
-snapshot model.PolicySnapshot,
-subject model.Subject,
-action string,
-resource model.Resource,
+	snapshot model.PolicySnapshot,
+	subject model.Subject,
+	action string,
+	resource model.Resource,
 ) (model.DecisionEffect, string) {
 	canonical := resource.Canonical()
 	for _, rule := range snapshot.Rules {

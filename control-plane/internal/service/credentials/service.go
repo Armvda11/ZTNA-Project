@@ -16,8 +16,8 @@ import (
 )
 
 type Service struct {
-	ca      *sshca.CA
-	sshCfg  config.SSHCAConfig
+	ca       *sshca.CA
+	sshCfg   config.SSHCAConfig
 	userRepo port.UserRepository
 }
 

@@ -1,9 +1,9 @@
 package policy
 
 import (
-"testing"
+	"testing"
 
-"control-plane/internal/domain/model"
+	"control-plane/internal/domain/model"
 )
 
 // helpers ─────────────────────────────────────────────────────
@@ -71,9 +71,9 @@ func TestEvaluate_DefaultDenyWhenNoRuleMatches(t *testing.T) {
 func TestEvaluate_FirstMatchWins(t *testing.T) {
 	e := NewEvaluationEngine()
 	snap := snapshot(
-rule(1, "deny", "user:alice", "ssh", "ssh", "*"),
-rule(2, "allow", "*", "ssh", "ssh", "*"),
-)
+		rule(1, "deny", "user:alice", "ssh", "ssh", "*"),
+		rule(2, "allow", "*", "ssh", "ssh", "*"),
+	)
 	effect, _ := e.Evaluate(snap, subject("alice", "sub-1"), "ssh", sshResource("10.10.30.10", 22))
 	if effect != model.DecisionDeny {
 		t.Fatalf("expected deny (first match), got %s", effect)

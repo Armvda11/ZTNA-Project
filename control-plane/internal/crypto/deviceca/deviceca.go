@@ -37,8 +37,8 @@ const (
 
 // CA is a loaded X.509 certificate authority.
 type CA struct {
-	cert   *x509.Certificate
-	key    *ecdsa.PrivateKey
+	cert    *x509.Certificate
+	key     *ecdsa.PrivateKey
 	rawCert []byte // DER-encoded CA cert for fast CACertPEM()
 }
 

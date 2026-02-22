@@ -92,8 +92,8 @@ type OIDCConfig struct {
 // -------------------- PEP (gateway -> CP) auth --------------------
 
 type PEPConfig struct {
-	AuthMode           string            `yaml:"auth_mode"`           // "token" or "mtls"
-	Tokens             map[string]string `yaml:"tokens"`              // pep_id -> pep_token (token mode)
+	AuthMode           string            `yaml:"auth_mode"`            // "token" or "mtls"
+	Tokens             map[string]string `yaml:"tokens"`               // pep_id -> pep_token (token mode)
 	DecisionTTLSeconds int               `yaml:"decision_ttl_seconds"` // advertised cache TTL for gateway decisions
 }
 

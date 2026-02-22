@@ -2,11 +2,11 @@
 package config
 
 import (
-"fmt"
-"os"
-"time"
+	"fmt"
+	"os"
+	"time"
 
-"gopkg.in/yaml.v3"
+	"gopkg.in/yaml.v3"
 )
 
 // Config is the root configuration for the ZTNA gateway.

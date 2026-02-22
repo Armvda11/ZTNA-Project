@@ -2,18 +2,18 @@
 package tlsutil
 
 import (
-"crypto/ecdsa"
-"crypto/elliptic"
-"crypto/rand"
-"crypto/tls"
-"crypto/x509"
-"crypto/x509/pkix"
-"encoding/pem"
-"fmt"
-"math/big"
-"net/http"
-"os"
-"time"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	"net/http"
+	"os"
+	"time"
 )
 
 // LoadOrGenerateSelfSignedCert loads server TLS cert from disk, or generates

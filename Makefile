@@ -10,7 +10,7 @@
         ssh-client ssh-gw ssh-cp ssh-app ssh-admin \
         vm-list vm-start vm-stop vm-force-stop vm-reboot vm-console \
         build-cp build-gw \
-        test test-unit test-flux1 test-flux2 \
+        test test-unit test-flux1 test-flux2 test-flux2-local setup-routing \
         fmt lint \
         logs-cp logs-gw logs-keycloak logs-vm \
         certs \
@@ -58,7 +58,8 @@ help: ## Affiche cette aide
 	@echo "  make deploy-gw      # Déployer la gateway ZTNA"
 	@echo "  make check          # Vérifier SSH + santé des services"
 	@echo "  make test-flux1     # Test bout en bout : SSH cert"
-	@echo "  make test-flux2     # Test bout en bout : mTLS HTTP"
+	@echo "  make setup-routing  # Configurer MASQUERADE sur ztna-gw (1 fois)"
+	@echo "  make test-flux2     # Test Flux 2 mTLS exécuté depuis wan-client"
 	@echo "  make destroy        # Détruire toute l'infra"
 	@echo ""
 	@echo "$(YELLOW)Toutes les cibles :$(NC)"
@@ -265,9 +266,31 @@ test-flux1: ## Test d'intégration Flux 1 – SSH par certificat
 	@echo "$(BLUE)[INFO]$(NC) Flux 1 : SSH cert (alice → ztna-gw → lan-app)"
 	@ZTNA_USER=alice ZTNA_PASS='Password123!' bash ./scripts/test-ssh-cert-access.sh lan-app
 
-# test-flux2 : validation bout en bout du flux mTLS HTTP (nécessite les VMs up)
-test-flux2: ## Test d'intégration Flux 2 – mTLS HTTP
-	@echo "$(BLUE)[INFO]$(NC) Flux 2 : mTLS HTTP (alice → ztna-gateway:4433 → lan-app:80)"
+# setup-routing : configure MASQUERADE sur ztna-gw pour que wan-client puisse
+# atteindre les services DMZ (Keycloak 8081, CP 8080) à travers le gateway.
+# À exécuter UNE SEULE FOIS après la création du lab (ou après reboot de ztna-gw).
+setup-routing: ## Configurer iptables MASQUERADE WAN→DMZ sur ztna-gw
+	@echo "$(BLUE)[INFO]$(NC) Configuration du routage WAN→DMZ sur ztna-gw ($(GW_IP))..."
+	@$(SSH) ztna@$(GW_IP) 'bash -s' < ./scripts/setup-gw-routing.sh
+	@echo "$(GREEN)[✓]$(NC) Routage configuré — wan-client peut désormais atteindre le CP et Keycloak."
+
+# test-flux2 : validation bout en bout du flux mTLS HTTP depuis wan-client.
+# Le script est copié sur wan-client puis exécuté depuis la VM elle-même,
+# exactement comme dans un vrai système ZTNA (utilisateur distant → gateway).
+test-flux2: ## Test Flux 2 mTLS exécuté depuis wan-client ($(CLIENT_IP))
+	@echo "$(BLUE)[INFO]$(NC) Flux 2 : copie du script sur wan-client ($(CLIENT_IP))..."
+	@$(SSH) ztna@$(CLIENT_IP) 'mkdir -p /home/ztna/ztna-scripts'
+	@scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+	  -i $(SSH_KEY) \
+	  ./scripts/test-mtls-access.sh \
+	  ztna@$(CLIENT_IP):/home/ztna/ztna-scripts/test-mtls-access.sh
+	@echo "$(BLUE)[INFO]$(NC) Exécution du test depuis wan-client..."
+	@$(SSH) ztna@$(CLIENT_IP) \
+	  'ZTNA_USER=alice ZTNA_PASS='"'"'Password123!'"'"' bash /home/ztna/ztna-scripts/test-mtls-access.sh http'
+
+# test-flux2-local : version locale (tourne sur le host KVM, utile pour debug)
+test-flux2-local: ## Test Flux 2 mTLS local (depuis le host, pour debug)
+	@echo "$(BLUE)[INFO]$(NC) Flux 2 local : mTLS HTTP (depuis host → ztna-gateway:4433 → lan-app:80)"
 	@ZTNA_USER=alice ZTNA_PASS='Password123!' bash ./scripts/test-mtls-access.sh http
 
 fmt: ## Formater le code Go (control-plane + gateway)

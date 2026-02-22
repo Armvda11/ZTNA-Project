@@ -2,10 +2,10 @@
 package gateway
 
 import (
-"context"
+	"context"
 
-"control-plane/internal/domain/model"
-"control-plane/internal/domain/port"
+	"control-plane/internal/domain/model"
+	"control-plane/internal/domain/port"
 )
 
 // Service manages gateway registrations and heartbeats.
