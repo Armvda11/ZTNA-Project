@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"crypto/subtle"
 	"net/http"
 
 	"control-plane/internal/config"
@@ -41,7 +42,8 @@ func (p *PEPAuth) RequirePEP(next http.Handler) http.Handler {
 		}
 
 		expected, ok := p.cfg.Tokens[pepID]
-		if !ok || expected == "" || expected != token {
+		// Use constant-time comparison to prevent timing-based token enumeration.
+		if !ok || expected == "" || subtle.ConstantTimeCompare([]byte(expected), []byte(token)) != 1 {
 			writeError(w, domainErrors.ErrUnauthorized)
 			return
 		}

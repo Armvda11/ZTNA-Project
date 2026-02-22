@@ -1,0 +1,26 @@
+listen_addr: "0.0.0.0:4433"
+gateway_id:  "ztna-gw-01"
+
+cp_url:          "https://10.10.20.30:8080"
+pep_id:          "ztna-gw-01"
+pep_token:       "ztna-lab-pep-secret-2026"
+cp_tls_insecure: true
+heartbeat_every: 30s
+
+tls:
+  device_ca_cert: ""   # vide = auto-fetch depuis le CP au demarrage
+  server_cert:    ""   # vide = certificat ephemere auto-genere
+  server_key:     ""
+
+routes:
+  - resource_type:  "ssh"
+    resource_match: "ssh:lan-app:22"
+    target:         "10.10.30.10:22"
+
+  - resource_type:  "http"
+    resource_match: "http:lan-app:80"
+    target:         "10.10.30.10:80"
+
+  - resource_type:  "ssh"
+    resource_match: "ssh:lan-admin:22"
+    target:         "10.10.30.11:22"

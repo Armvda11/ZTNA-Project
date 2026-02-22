@@ -5,15 +5,19 @@ import (
 	"fmt"
 	"log/slog"
 
+	"golang.org/x/time/rate"
+
 	"control-plane/internal/api/handlers"
 	"control-plane/internal/api/httpserver"
 	"control-plane/internal/api/middleware"
 	"control-plane/internal/config"
+	"control-plane/internal/crypto/deviceca"
 	"control-plane/internal/crypto/sshca"
 	"control-plane/internal/logger"
 	"control-plane/internal/service/audit"
 	"control-plane/internal/service/credentials"
 	"control-plane/internal/service/decision"
+	"control-plane/internal/service/gateway"
 	"control-plane/internal/service/policy"
 	"control-plane/internal/store/sqlite"
 )
@@ -37,10 +41,18 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 		return nil, err
 	}
 
+	deviceCA, err := deviceca.LoadOrCreate(cfg.DeviceCA.KeyPath, cfg.DeviceCA.CertPath)
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("init device ca: %w", err)
+	}
+
 	policySvc := policy.New(store)
 	auditSvc := audit.New(store)
 	credsSvc := credentials.New(ca, cfg.SSHCA, store)
-	decisionSvc := decision.New(policySvc)
+	deviceCredsSvc := credentials.NewDeviceCertService(deviceCA, cfg.DeviceCA, store)
+	gatewaySvc := gateway.New(store)
+	decisionSvc := decision.New(policySvc, cfg.PEP.DecisionTTLSeconds)
 	if err := policySvc.SeedIfEmpty(ctx, cfg.Policy.SeedFile); err != nil {
 		_ = store.Close()
 		return nil, err
@@ -55,15 +67,25 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 	pepAuth := middleware.NewPEPAuth(cfg.PEP)
 	adminAuth := middleware.NewAdminAuth(cfg.OIDC)
 
+	// Rate limiters: 20 req/s (burst 40) pour le public, 100 req/s (burst 200) pour PEP.
+	publicRL := middleware.NewIPRateLimiter(rate.Limit(20), 40)
+	pepRL := middleware.NewIPRateLimiter(rate.Limit(100), 200)
+
 	server, err := httpserver.New(cfg, httpserver.Dependencies{
-		CredentialsHandler: handlers.NewCredentialsHandler(credsSvc, auditSvc),
-		PEPHandler:         handlers.NewPEPHandler(decisionSvc, auditSvc),
-		AdminPolicies:      handlers.NewAdminPoliciesHandler(policySvc, auditSvc),
-		AdminAudit:         handlers.NewAdminAuditHandler(auditSvc),
-		WhoamiHandler:      handlers.NewWhoamiHandler(),
-		OIDC:               oidcValidator,
-		PEPAuth:            pepAuth,
-		AdminAuth:          adminAuth,
+		CredentialsHandler:  handlers.NewCredentialsHandler(credsSvc, auditSvc),
+		DeviceCertHandler:   handlers.NewDeviceCertHandler(deviceCredsSvc, auditSvc),
+		PKIHandler:          handlers.NewPKIHandler(deviceCredsSvc, credsSvc),
+		AdminDeviceCerts:    handlers.NewAdminDeviceCertsHandler(deviceCredsSvc, auditSvc),
+		PEPHandler:          handlers.NewPEPHandler(decisionSvc, auditSvc),
+		PEPHeartbeatHandler: handlers.NewPEPHeartbeatHandler(gatewaySvc),
+		AdminPolicies:       handlers.NewAdminPoliciesHandler(policySvc, auditSvc),
+		AdminAudit:          handlers.NewAdminAuditHandler(auditSvc),
+		WhoamiHandler:       handlers.NewWhoamiHandler(),
+		OIDC:                oidcValidator,
+		PEPAuth:             pepAuth,
+		AdminAuth:           adminAuth,
+		PublicRateLimiter:   publicRL,
+		PEPRateLimiter:      pepRL,
 	})
 	if err != nil {
 		_ = store.Close()

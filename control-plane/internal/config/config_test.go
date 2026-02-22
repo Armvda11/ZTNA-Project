@@ -17,6 +17,7 @@ func TestLoad(t *testing.T) {
 		"  path: \":memory:\"\n" +
 		"oidc:\n" +
 		"  issuer: \"http://issuer.example/realms/ztna\"\n" +
+		"  allow_http_issuer: true\n" +
 		"  audience: \"ztna-control-plane\"\n" +
 		"  username_claim: \"preferred_username\"\n" +
 		"  groups_claim: \"groups\"\n" +
@@ -75,8 +76,9 @@ func TestValidate(t *testing.T) {
 		},
 		Database: DatabaseConfig{Path: ":memory:"},
 		OIDC: OIDCConfig{
-			Issuer:        "http://issuer.example/realms/ztna",
-			Audience:      "ztna-control-plane",
+			Issuer:          "http://issuer.example/realms/ztna",
+			AllowHTTPIssuer: true,
+			Audience:        "ztna-control-plane",
 			UsernameClaim: "preferred_username",
 			GroupsClaim:   "groups",
 			AllowedAlgs:   []string{"RS256"},
@@ -93,6 +95,11 @@ func TestValidate(t *testing.T) {
 		SSHCA: SSHCAConfig{
 			KeyPath:    "/tmp/ssh_ca",
 			DefaultTTL: "15m",
+		},
+		DeviceCA: DeviceCAConfig{
+			KeyPath:    "/tmp/device_ca.key",
+			CertPath:   "/tmp/device_ca.crt",
+			DefaultTTL: "168h",
 		},
 		Policy: PolicyConfig{SeedFile: "./policies.yaml"},
 	}

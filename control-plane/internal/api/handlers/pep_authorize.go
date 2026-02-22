@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -40,25 +41,83 @@ type subjectRequest struct {
 	Groups   []string `json:"groups"`
 }
 
-type resourceRequest struct {
-	Type string `json:"type"`
+type resourceHostPort struct {
 	Host string `json:"host"`
 	Port int    `json:"port"`
 }
 
+// resourceRequest supporte deux formats JSON pour la ressource afin de rester
+// compatible avec des clients futurs et le format envoyé par la gateway :
+//
+//	Format structuré (gateway) :
+//	  {"type":"http", "http":{"host":"lan-app","port":80}}
+//	  {"type":"ssh",  "ssh": {"host":"lan-app","port":22}}
+//
+//	Format plat (usage direct) :
+//	  {"type":"ssh", "host":"lan-app", "port":22}
+//
+// Les helpers resolvedHost / resolvedPort normalisent les deux formes.
+type resourceRequest struct {
+	Type string            `json:"type"`
+	// Flat fields (legacy / simple format)
+	Host string            `json:"host,omitempty"`
+	Port int               `json:"port,omitempty"`
+	// Structured sub-objects (gateway format)
+	SSH  *resourceHostPort `json:"ssh,omitempty"`
+	HTTP *resourceHostPort `json:"http,omitempty"`
+}
+
+// resolvedHost renvoie le host en privilégiant le sous-objet typé (ssh/http)
+// sur le champ plat host pour maintenir la compatibilité descendante.
+func (r resourceRequest) resolvedHost() string {
+	switch strings.ToLower(r.Type) {
+	case "ssh":
+		if r.SSH != nil && r.SSH.Host != "" {
+			return r.SSH.Host
+		}
+	case "http":
+		if r.HTTP != nil && r.HTTP.Host != "" {
+			return r.HTTP.Host
+		}
+	}
+	return r.Host
+}
+
+// resolvedPort returns the port from either the flat or structured form.
+func (r resourceRequest) resolvedPort() int {
+	switch strings.ToLower(r.Type) {
+	case "ssh":
+		if r.SSH != nil && r.SSH.Port > 0 {
+			return r.SSH.Port
+		}
+	case "http":
+		if r.HTTP != nil && r.HTTP.Port > 0 {
+			return r.HTTP.Port
+		}
+	}
+	return r.Port
+}
+
 type authorizeResponse struct {
-	Decision      string `json:"decision"`
+	Effect        string `json:"effect"`
 	TTLSeconds    int    `json:"ttl_seconds"`
 	Reason        string `json:"reason"`
 	PolicyVersion int64  `json:"policy_version"`
 	DecisionID    string `json:"decision_id"`
 }
 
-// Authorize traite une requête d'autorisation envoyée par le PEP. Elle
-// valide l'entrée, appelle le service `decision` pour obtenir une
-// décision, journalise l'événement d'audit et renvoie la réponse JSON.
-// Le champ `context.src_ip` est priorisé pour la source IP (fourni par
-// la gateway) avant de retomber sur les en-têtes HTTP classiques.
+// Authorize traite une requête d'autorisation envoyée par un PEP (gateway).
+//
+// Flux complet :
+//  1. Décodage + validation de la requête JSON.
+//  2. Normalisation du sujet (username = sub si username vide).
+//  3. Construction du model.Resource selon le type (ssh | http).
+//  4. Appel au service décision qui évalue les politiques actives.
+//  5. Enregistrement de la décision dans le journal d'audit.
+//  6. Réponse JSON avec effect ("allow" | "deny") + raison + TTL.
+//
+// Note sur le champ JSON de réponse : le champ s'appelle `effect` (et non
+// `decision`) pour correspondre au champ lu par le client gateway.
 func (h *PEPHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 	var req authorizeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -73,11 +132,12 @@ func (h *PEPHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, domainErrors.ErrInvalidInput)
 		return
 	}
-	if strings.ToLower(req.Resource.Type) != string(model.ResourceSSH) {
+	resType := strings.ToLower(req.Resource.Type)
+	if resType != string(model.ResourceSSH) && resType != string(model.ResourceHTTP) {
 		writeError(w, domainErrors.ErrInvalidInput)
 		return
 	}
-	if strings.TrimSpace(req.Resource.Host) == "" || req.Resource.Port <= 0 {
+	if strings.TrimSpace(req.Resource.resolvedHost()) == "" || req.Resource.resolvedPort() <= 0 {
 		writeError(w, domainErrors.ErrInvalidInput)
 		return
 	}
@@ -90,12 +150,25 @@ func (h *PEPHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 	if subject.Username == "" {
 		subject.Username = subject.Sub
 	}
-	resource := model.Resource{
-		Type: model.ResourceSSH,
-		SSH: &model.SSHResource{
-			Host: req.Resource.Host,
-			Port: req.Resource.Port,
-		},
+
+	var resource model.Resource
+	switch resType {
+	case string(model.ResourceHTTP):
+		resource = model.Resource{
+			Type: model.ResourceHTTP,
+			HTTP: &model.HTTPResource{
+				Host: req.Resource.resolvedHost(),
+				Port: req.Resource.resolvedPort(),
+			},
+		}
+	default:
+		resource = model.Resource{
+			Type: model.ResourceSSH,
+			SSH: &model.SSHResource{
+				Host: req.Resource.resolvedHost(),
+				Port: req.Resource.resolvedPort(),
+			},
+		}
 	}
 
 	decisionResp, err := h.decision.Authorize(r.Context(), decision.AuthorizeRequest{
@@ -115,7 +188,7 @@ func (h *PEPHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 	if srcIP == "" {
 		srcIP = extractRemoteIP(r)
 	}
-	_ = h.audit.Append(r.Context(), model.AuditEvent{
+	if appendErr := h.audit.Append(r.Context(), model.AuditEvent{
 		Subject:       formatSubjectForAudit(subject),
 		Action:        req.Action,
 		Resource:      resource.Canonical(),
@@ -124,10 +197,12 @@ func (h *PEPHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 		PepID:         pepID,
 		SourceIP:      srcIP,
 		PolicyVersion: decisionResp.PolicyVersion,
-	})
+	}); appendErr != nil {
+		slog.Error("audit append failed", "action", req.Action, "err", appendErr)
+	}
 
 	writeJSON(w, http.StatusOK, authorizeResponse{
-		Decision:      string(decisionResp.Effect),
+		Effect:        string(decisionResp.Effect),
 		TTLSeconds:    decisionResp.TTLSeconds,
 		Reason:        decisionResp.Reason,
 		PolicyVersion: decisionResp.PolicyVersion,

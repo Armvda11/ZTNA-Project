@@ -27,20 +27,29 @@ type Server struct {
 }
 
 type Dependencies struct {
-	CredentialsHandler *handlers.CredentialsHandler
-	PEPHandler         *handlers.PEPHandler
-	AdminPolicies      *handlers.AdminPoliciesHandler
-	AdminAudit         *handlers.AdminAuditHandler
-	WhoamiHandler      *handlers.WhoamiHandler
-	OIDC               *middleware.OIDCValidator
-	PEPAuth            *middleware.PEPAuth
-	AdminAuth          *middleware.AdminAuth
+	CredentialsHandler    *handlers.CredentialsHandler
+	DeviceCertHandler     *handlers.DeviceCertHandler
+	PKIHandler            *handlers.PKIHandler
+	AdminDeviceCerts      *handlers.AdminDeviceCertsHandler
+	PEPHandler            *handlers.PEPHandler
+	PEPHeartbeatHandler   *handlers.PEPHeartbeatHandler
+	AdminPolicies         *handlers.AdminPoliciesHandler
+	AdminAudit            *handlers.AdminAuditHandler
+	WhoamiHandler         *handlers.WhoamiHandler
+	OIDC                  *middleware.OIDCValidator
+	PEPAuth               *middleware.PEPAuth
+	AdminAuth             *middleware.AdminAuth
+	PublicRateLimiter     *middleware.RateLimiter
+	PEPRateLimiter        *middleware.RateLimiter
 }
 
 func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 	publicRouter := chi.NewRouter()
 	publicRouter.Use(chimw.Recoverer)
 	publicRouter.Use(middleware.RequestID)
+	if deps.PublicRateLimiter != nil {
+		publicRouter.Use(deps.PublicRateLimiter.Handler)
+	}
 
 	publicRouter.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -56,12 +65,18 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 		r.Route("/credentials", func(r chi.Router) {
 			r.Use(deps.OIDC.RequireUser)
 			r.Post("/ssh-cert", deps.CredentialsHandler.IssueSSHCert)
+			if deps.DeviceCertHandler != nil {
+				r.Post("/device-cert", deps.DeviceCertHandler.Issue)
+			}
 		})
 
 		if cfg.PEP.AuthMode != "mtls" {
 			r.Route("/pep", func(r chi.Router) {
 				r.Use(deps.PEPAuth.RequirePEP)
 				r.Post("/authorize", deps.PEPHandler.Authorize)
+				if deps.PEPHeartbeatHandler != nil {
+					r.Post("/heartbeat", deps.PEPHeartbeatHandler.Beat)
+				}
 			})
 		}
 
@@ -72,8 +87,20 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 			r.Post("/policies/{id}/activate", deps.AdminPolicies.ActivateVersion)
 			r.Get("/policies/active", deps.AdminPolicies.ActivePolicy)
 			r.Get("/audit", deps.AdminAudit.List)
+			if deps.AdminDeviceCerts != nil {
+				r.Delete("/device-certs/{serial}", deps.AdminDeviceCerts.Revoke)
+			}
 		})
 	})
+
+	// PKI endpoints — no authentication, required for gateway bootstrap.
+	if deps.PKIHandler != nil {
+		publicRouter.Route("/pki", func(r chi.Router) {
+			r.Get("/device-ca/cert", deps.PKIHandler.CACert)
+			r.Get("/device-ca/crl", deps.PKIHandler.CRL)
+			r.Get("/ssh-ca/pubkey", deps.PKIHandler.SSHCAPubKey)
+		})
+	}
 
 	publicAddr := fmt.Sprintf("%s:%d", cfg.Server.Address, cfg.Server.Port)
 	publicServer := &http.Server{
@@ -98,9 +125,15 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 		pepRouter := chi.NewRouter()
 		pepRouter.Use(chimw.Recoverer)
 		pepRouter.Use(middleware.RequestID)
+		if deps.PEPRateLimiter != nil {
+			pepRouter.Use(deps.PEPRateLimiter.HandlerByPEP)
+		}
 		pepRouter.Route("/api/v1/pep", func(r chi.Router) {
 			r.Use(deps.PEPAuth.RequirePEP)
 			r.Post("/authorize", deps.PEPHandler.Authorize)
+			if deps.PEPHeartbeatHandler != nil {
+				r.Post("/heartbeat", deps.PEPHeartbeatHandler.Beat)
+			}
 		})
 
 		pepAddr := fmt.Sprintf("%s:%d", cfg.PEPServer.Address, cfg.PEPServer.Port)
@@ -203,7 +236,7 @@ func buildTLSConfig(tlsCfg config.TLSConfig, forceClientAuth bool) (*tls.Config,
 		return nil, "", "", nil
 	}
 
-	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13}
 	certFile := tlsCfg.CertFile
 	keyFile := tlsCfg.KeyFile
 

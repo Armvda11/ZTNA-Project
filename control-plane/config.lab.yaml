@@ -51,14 +51,25 @@ oidc:
 pep:
   auth_mode: token
   tokens:
-    ztna-gw-1: "CHANGE_ME_LONG_RANDOM"
+    ztna-gw-01: "ztna-lab-pep-secret-2026"
+
+device_ca:
+  key_path: ./pki/device_ca.key
+  cert_path: ./pki/device_ca.crt
+  default_ttl: 168h
+  min_ttl: 1h
+  max_ttl: 720h
+  allowed_key_types: ["ecdsa-p256", "ed25519"]
 
 sshca:
   key_path: ./ssh_ca
   default_ttl: 15m
   min_ttl: 1m
   max_ttl: 1h
+  # 'ztna' = unix user cible sur les VMs ; ${username} = username du token OIDC
+  # On inclut les deux pour que le certificat fonctionne en SSH direct
   allowed_principals:
+    - "ztna"
     - "${username}"
 
 policy:

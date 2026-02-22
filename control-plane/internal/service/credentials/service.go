@@ -10,19 +10,19 @@ import (
 	"control-plane/internal/crypto/sshca"
 	domainErrors "control-plane/internal/domain/errors"
 	"control-plane/internal/domain/model"
-	"control-plane/internal/store/sqlite"
+	"control-plane/internal/domain/port"
 
 	"golang.org/x/crypto/ssh"
 )
 
 type Service struct {
-	ca  *sshca.CA
-	cfg config.SSHCAConfig
-	db  *sqlite.Store
+	ca      *sshca.CA
+	sshCfg  config.SSHCAConfig
+	userRepo port.UserRepository
 }
 
-func New(ca *sshca.CA, cfg config.SSHCAConfig, db *sqlite.Store) *Service {
-	return &Service{ca: ca, cfg: cfg, db: db}
+func New(ca *sshca.CA, sshCfg config.SSHCAConfig, userRepo port.UserRepository) *Service {
+	return &Service{ca: ca, sshCfg: sshCfg, userRepo: userRepo}
 }
 
 type IssueRequest struct {
@@ -40,7 +40,7 @@ type IssueResponse struct {
 }
 
 func (s *Service) IssueSSHCert(ctx context.Context, req IssueRequest) (IssueResponse, error) {
-	if err := s.db.UpsertUser(ctx, req.Subject); err != nil {
+	if err := s.userRepo.UpsertUser(ctx, req.Subject); err != nil {
 		return IssueResponse{}, err
 	}
 
@@ -49,7 +49,7 @@ func (s *Service) IssueSSHCert(ctx context.Context, req IssueRequest) (IssueResp
 		return IssueResponse{}, fmt.Errorf("parse public key: %w", err)
 	}
 
-	ttl, err := time.ParseDuration(s.cfg.DefaultTTL)
+	ttl, err := time.ParseDuration(s.sshCfg.DefaultTTL)
 	if err != nil {
 		return IssueResponse{}, fmt.Errorf("invalid sshca default ttl: %w", err)
 	}
@@ -58,8 +58,8 @@ func (s *Service) IssueSSHCert(ctx context.Context, req IssueRequest) (IssueResp
 	}
 
 	// Validate and clamp TTL to configured bounds
-	minTTL := parseDurationOrZero(s.cfg.MinTTL)
-	maxTTL := parseDurationOrZero(s.cfg.MaxTTL)
+	minTTL := parseDurationOrZero(s.sshCfg.MinTTL)
+	maxTTL := parseDurationOrZero(s.sshCfg.MaxTTL)
 	if minTTL > 0 && ttl < minTTL {
 		return IssueResponse{}, domainErrors.ErrInvalidInput
 	}
@@ -68,7 +68,7 @@ func (s *Service) IssueSSHCert(ctx context.Context, req IssueRequest) (IssueResp
 		ttl = maxTTL // Clamp instead of reject for better UX
 	}
 
-	allowed := resolvePrincipals(s.cfg.AllowedPrincipals, req.Subject)
+	allowed := resolvePrincipals(s.sshCfg.AllowedPrincipals, req.Subject)
 	if len(allowed) == 0 {
 		return IssueResponse{}, domainErrors.ErrInvalidInput
 	}
@@ -165,6 +165,13 @@ func resolveRequestedPrincipals(requested []string, allowed []string, username s
 	}
 
 	return filtered, nil
+}
+
+// CAPubKeyAuthorizedKey returns the SSH CA public key in authorized_keys format.
+// It is used by the PKI handler to serve /pki/ssh-ca/pubkey so that SSH servers
+// (gateway, lan-app) can configure TrustedUserCAKeys without needing filesystem access.
+func (s *Service) CAPubKeyAuthorizedKey() []byte {
+	return s.ca.CAPubKeyAuthorizedKey()
 }
 
 func containsPrincipal(values []string, target string) bool {
