@@ -1,0 +1,36 @@
+# Configuration de la Gateway ZTNA — environnement de lab
+#
+# ⚠️  Ce fichier contient des paramètres adaptés UNIQUEMENT à l'environnement
+# de lab (KVM/libvirt). NE PAS utiliser en production sans modifications.
+#
+# Réseau lab :
+#   - Control Plane : 10.10.20.30
+#   - Gateway       : 10.10.20.20 (cette machine)
+#   - Keycloak      : 10.10.20.30:8081
+
+server:
+  listen_addr: "0.0.0.0:9443"
+  tls:
+    cert_file: "./certs/gateway.crt"       # Certificat TLS de la Gateway
+    key_file: "./certs/gateway.key"        # Clé privée de la Gateway
+    client_ca_file: "./certs/client-ca.crt" # CA pour vérifier les certs clients (émise par le CP)
+
+control_plane:
+  base_url: "https://10.10.20.30:8443"     # Endpoint PEP du Control Plane
+  ca_file: "./certs/cp-ca.crt"             # CA pour vérifier le cert du CP
+  insecure_skip_verify: false
+
+# Identifiants PEP pour l'authentification de la Gateway auprès du CP.
+# Correspondent à la configuration pep.tokens dans le CP.
+pep:
+  id: "ztna-gw-1"
+  token: "CHANGE_ME_LONG_RANDOM"           # ⚠️ Changer cette valeur !
+
+proxy:
+  dial_timeout: "10s"                      # Timeout de connexion vers les ressources cibles
+  max_conns: 100                           # Nombre max de connexions concurrentes
+  rate_limit: 0                            # 0 = pas de limite (lab)
+
+logging:
+  level: "debug"                           # debug en lab pour visibilité maximale
+  format: "text"                           # text en lab pour lisibilité ; json en prod

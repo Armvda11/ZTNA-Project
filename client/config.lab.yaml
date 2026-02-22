@@ -1,0 +1,38 @@
+# Configuration du client ZTNA — environnement de lab
+#
+# ⚠️  Ce fichier contient des paramètres adaptés UNIQUEMENT à l'environnement
+# de lab (KVM/libvirt). NE PAS utiliser en production sans modifications.
+#
+# Réseau lab :
+#   - Control Plane : 10.10.20.30
+#   - Gateway       : 10.10.20.20
+#   - Keycloak      : 10.10.20.30:8081
+
+oidc:
+  issuer: "http://10.10.20.30:8081/realms/ztna"
+  client_id: "ztna-client"
+  client_secret: ""          # Laisser vide si le client public ; remplir si confidentiel
+  audience: ""               # Optionnel ; à configurer selon la politique Keycloak
+
+control_plane:
+  base_url: "https://10.10.20.30:8080"
+  ca_file: "./certs/ca.crt"  # CA auto-signée du lab
+  insecure_skip_verify: false
+
+gateway:
+  address: "10.10.20.20:9443"  # Port mTLS de la Gateway
+
+tls:
+  ca_file: "./certs/ca.crt"   # CA de confiance pour vérifier le certificat Gateway
+
+storage:
+  path: "./.ztna"              # Répertoire local pour tokens et certificats
+
+security:
+  # ⚠️  Lab uniquement — permet les URL OIDC en HTTP au lieu de HTTPS.
+  # En production, le provider OIDC DOIT être accessible en HTTPS.
+  insecure_allow_http_oidc: true
+
+logging:
+  level: "debug"               # debug en lab pour visibilité maximale
+  format: "text"               # text en lab pour lisibilité ; json en prod
