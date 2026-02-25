@@ -3,7 +3,7 @@
 # ============================================================================
 
 .PHONY: help \
-        quickstart prereq \
+        quickstart prereq doctor doctor-dry doctor-full bootstrap \
         up lab-start destroy \
         deploy deploy-gw \
         check status check-vms check-ssh healthz \
@@ -41,7 +41,11 @@ help:
 	@echo "$(BLUE)ZTNA Lab — commandes principales$(NC)"
 	@echo ""
 	@echo "$(YELLOW)Onboarding$(NC)"
+	@echo "  make bootstrap     Installation complète + démarrage VMs (1 seule commande ← COMMENCER ICI)"
 	@echo "  make prereq        Vérifier les prérequis minimum"
+	@echo "  make doctor        Diagnostic + réparation automatique (si VMs ne démarrent pas)"
+	@echo "  make doctor-dry    Diagnostic seul - lecture seule, aucune modification"
+	@echo "  make doctor-full   Diagnostic + réparation + tentative de démarrage des VMs"
 	@echo "  make quickstart    Parcours recommandé: prereq -> up -> deploy -> deploy-gw -> check"
 	@echo ""
 	@echo "$(YELLOW)Infra$(NC)"
@@ -85,7 +89,19 @@ help:
 prereq:
 	@bash ./scripts/check-requirements.sh
 
-quickstart: prereq up deploy deploy-gw check
+doctor:
+	@bash ./scripts/ztna-doctor.sh
+
+doctor-dry:
+	@bash ./scripts/ztna-doctor.sh --dry
+
+doctor-full:
+	@bash ./scripts/ztna-doctor.sh --full
+
+bootstrap:
+	@bash ./scripts/bootstrap.sh
+
+quickstart: doctor prereq up deploy deploy-gw check
 	@echo "$(GREEN)[✓]$(NC) Quickstart terminé"
 
 # ============================================================================

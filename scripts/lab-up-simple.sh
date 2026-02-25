@@ -28,6 +28,115 @@ virsh_lab() {
   bash "${VIRSH_WRAPPER}" "$@"
 }
 
+cleanup_orphan_cloudinit() {
+  # Les volumes cloud-init ISO peuvent rester orphelins si le state Terraform
+  # a été recréé. On les supprime s'ils sont présents dans libvirt mais pas
+  # dans le state Terraform — Terraform les recréera à l'apply.
+  local pool_name="ztna-lab"
+  local -a ci_vols=(
+    "libvirt_cloudinit_disk.wan_client_ci:wan-client-ci.iso"
+    "libvirt_cloudinit_disk.ztna_gw_ci:ztna-gw-ci.iso"
+    "libvirt_cloudinit_disk.ztna_cp_ci:ztna-cp-ci.iso"
+    "libvirt_cloudinit_disk.lan_app_ci:lan-app-ci.iso"
+    "libvirt_cloudinit_disk.lan_admin_ci:lan-admin-ci.iso"
+  )
+
+  info "Nettoyage des volumes cloud-init orphelins"
+
+  for entry in "${ci_vols[@]}"; do
+    local tf_resource="${entry%%:*}"
+    local vol_name="${entry#*:}"
+
+    # Si déjà suivi par Terraform → rien à faire
+    if tf state show "${tf_resource}" >/dev/null 2>&1; then
+      continue
+    fi
+
+    # Si le volume existe dans libvirt → le supprimer (sera recréé par Terraform)
+    if virsh_lab vol-info --pool "${pool_name}" "${vol_name}" >/dev/null 2>&1; then
+      info "Suppression du volume orphelin : ${vol_name}"
+      virsh_lab vol-delete --pool "${pool_name}" "${vol_name}" >/dev/null 2>&1 \
+        && ok "Volume orphelin supprimé : ${vol_name}" \
+        || fail "Impossible de supprimer ${vol_name}"
+    fi
+  done
+}
+
+reconcile_pool_state() {
+  local pool_name="ztna-lab"
+  local tf_resource="libvirt_pool.ztna"
+
+  info "Réconciliation Terraform state <-> libvirt (pool)"
+
+  if tf state show "${tf_resource}" >/dev/null 2>&1; then
+    ok "Pool '${pool_name}' déjà suivi par Terraform"
+    return
+  fi
+
+  if ! virsh_lab pool-info "${pool_name}" >/dev/null 2>&1; then
+    info "Pool '${pool_name}' absent dans libvirt, sera créé par Terraform"
+    return
+  fi
+
+  # Le provider libvirt v0.7.x attend un UUID, pas un nom
+  local pool_uuid
+  pool_uuid="$(virsh_lab pool-dumpxml "${pool_name}" 2>/dev/null \
+    | grep '<uuid>' | sed 's|.*<uuid>\(.*\)</uuid>.*|\1|' | tr -d '[:space:]')"
+
+  if [ -z "${pool_uuid}" ]; then
+    fail "UUID introuvable pour le pool '${pool_name}', import impossible"
+    exit 1
+  fi
+
+  info "Import pool '${pool_name}' (${pool_uuid}) dans ${tf_resource}"
+  if tf import "${tf_resource}" "${pool_uuid}" >/dev/null 2>&1; then
+    ok "Pool '${pool_name}' importé dans le state Terraform"
+  else
+    fail "Échec import Terraform pour le pool '${pool_name}'"
+    exit 1
+  fi
+}
+
+reconcile_network_state() {
+  local entry tf_resource net_name net_uuid
+  local -a networks=(
+    "libvirt_network.wan:wan-net"
+    "libvirt_network.dmz:dmz-net"
+    "libvirt_network.lan:lan-net"
+  )
+
+  info "Réconciliation Terraform state <-> libvirt (réseaux)"
+
+  for entry in "${networks[@]}"; do
+    tf_resource="${entry%%:*}"
+    net_name="${entry#*:}"
+
+    if tf state show "${tf_resource}" >/dev/null 2>&1; then
+      ok "Réseau '${net_name}' déjà suivi par Terraform"
+      continue
+    fi
+
+    if ! virsh_lab net-info "${net_name}" >/dev/null 2>&1; then
+      info "Réseau '${net_name}' absent dans libvirt, sera créé par Terraform"
+      continue
+    fi
+
+    net_uuid="$(virsh_lab net-uuid "${net_name}" 2>/dev/null | tr -d '[:space:]')"
+    if [ -z "${net_uuid}" ]; then
+      fail "UUID introuvable pour le réseau '${net_name}', import impossible"
+      exit 1
+    fi
+
+    info "Import réseau '${net_name}' (${net_uuid}) dans ${tf_resource}"
+    if tf import "${tf_resource}" "${net_uuid}" >/dev/null 2>&1; then
+      ok "Réseau '${net_name}' importé dans le state Terraform"
+    else
+      fail "Échec import Terraform pour le réseau '${net_name}'"
+      exit 1
+    fi
+  done
+}
+
 reconcile_domain_state() {
   local entry tf_resource vm_name vm_uuid
   local -a domains=(
@@ -61,7 +170,7 @@ reconcile_domain_state() {
     fi
 
     info "Import ${vm_name} (${vm_uuid}) dans ${tf_resource}"
-    if tf import "${tf_resource}" "${vm_uuid}" >/dev/null; then
+    if tf import "${tf_resource}" "${vm_uuid}" >/dev/null 2>&1; then
       ok "${vm_name} importée dans le state Terraform"
     else
       fail "Échec import Terraform pour ${vm_name}"
@@ -90,7 +199,10 @@ main() {
   info "Terraform init"
   tf init -upgrade
 
+  reconcile_pool_state
+  reconcile_network_state
   reconcile_domain_state
+  cleanup_orphan_cloudinit
 
   info "Terraform apply"
   tf apply -var-file=terraform.tfvars -auto-approve
