@@ -137,13 +137,19 @@ func (s *Store) InsertAuditEvent(ctx context.Context, event model.AuditEvent) er
 	return nil
 }
 
-func (s *Store) ListAuditEvents(ctx context.Context, limit int) ([]model.AuditEvent, error) {
+func (s *Store) ListAuditEvents(ctx context.Context, limit, offset int) ([]model.AuditEvent, error) {
 	if limit <= 0 {
 		limit = 100
 	}
+	if limit > 500 {
+		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
+	}
 
 	rows, err := s.db.QueryContext(ctx, `SELECT id, ts, subject, action, resource, decision, reason, pep_id, src_ip, policy_version
-        FROM audit_events ORDER BY ts DESC LIMIT ?`, limit)
+        FROM audit_events ORDER BY ts DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list audit events: %w", err)
 	}

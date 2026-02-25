@@ -69,6 +69,12 @@ func (c *CA) SignUserCert(publicKey ssh.PublicKey, principals []string, ttl time
 	return string(ssh.MarshalAuthorizedKey(cert)), time.Unix(int64(cert.ValidBefore), 0).UTC(), nil
 }
 
+// CAPubKeyAuthorizedKey returns the SSH CA public key in authorized_keys format,
+// suitable for use as a TrustedUserCAKeys entry on SSH servers.
+func (c *CA) CAPubKeyAuthorizedKey() []byte {
+	return ssh.MarshalAuthorizedKey(c.signer.PublicKey())
+}
+
 func marshalEd25519PrivateKey(key ed25519.PrivateKey) ([]byte, error) {
 	keyBytes, err := x509.MarshalPKCS8PrivateKey(key)
 	if err != nil {

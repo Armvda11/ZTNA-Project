@@ -49,9 +49,14 @@ oidc:
   allow_http_issuer: false  # Production: must use https:// issuer
 
 pep:
-  auth_mode: token
-  tokens:
-    ztna-gw-1: "CHANGE_ME_LONG_RANDOM"
+  auth_mode: mtls
+  decision_ttl_seconds: 60
+  require_registration: true
+  revoked_pep_ids: []
+  # Token mode kept as explicit fallback for lab/troubleshooting only.
+  # auth_mode: token
+  # tokens:
+  #   ztna-gw-1: "CHANGE_ME_LONG_RANDOM"
 
 sshca:
   key_path: ./ssh_ca

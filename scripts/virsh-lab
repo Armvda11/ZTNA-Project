@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# virsh-lab — exécute virsh --connect qemu:///system via sg libvirt
+# Usage : bash scripts/virsh-lab list --all
+#
+# Pourquoi : l'utilisateur est dans le groupe libvirt mais la session
+# courante ne l'a pas chargé (ajout après login). sg force le groupe
+# sans logout/login ni sudo.
+
+ARGS=$(printf '%q ' "$@")
+exec sg libvirt -c "virsh --connect qemu:///system ${ARGS}"

@@ -1,59 +1,58 @@
-# ZTNA Lab - Guide de demarrage rapide
+# ZTNA Lab - Quickstart
 
-## Etape 1 - Prerequis (2 min)
+## 1. Prerequis
 
 ```bash
-grep -E 'vmx|svm' /proc/cpuinfo
-free -h | grep Mem
-df -h /
+make prereq
 ```
 
-Details: [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md)
-
-## Etape 2 - Installation automatique (5-10 min)
+Si des outils manquent, installer via:
 
 ```bash
-git clone https://github.com/your-org/ZTNA.git
-cd ZTNA
 ./setup.sh
 newgrp libvirt
-make check-requirements
 ```
 
-## Etape 3 - Creer le lab (5-10 min)
+## 2. Parcours unique recommande
 
 ```bash
-make init
+make quickstart
 ```
 
-## Etape 4 - Verifier (2 min)
+Ce parcours cree l'infra puis deploie control-plane et gateway.
+
+## 3. Verification rapide
 
 ```bash
 make check
-```
-
-## Acces rapide SSH
-
-```bash
-make ssh-client   # 10.10.10.10
-make ssh-gw       # 10.10.10.20
-make ssh-cp       # 10.10.20.30
-make ssh-app      # 10.10.30.10
-make ssh-admin    # 10.10.30.11
-```
-
-## Commandes utiles
-
-```bash
 make status
-make vm-start
-make vm-stop
-make destroy
-make help
 ```
 
-## Suite
+Checks attendus:
+- VMs visibles
+- SSH vers `wan-client`, `ztna-gw`, `ztna-cp`
+- `https://10.10.20.30:8080/healthz` joignable
 
-- Architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
-- Depannage: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-- Installation manuelle: [docs/SETUP.md](docs/SETUP.md)
+## 4. Tests fonctionnels
+
+```bash
+make test-flux1
+make test-flux2
+make test-crl-routing
+```
+
+## 5. Connexions SSH utiles
+
+```bash
+make ssh-client
+make ssh-gw
+make ssh-cp
+make ssh-app
+make ssh-admin
+```
+
+## 6. Nettoyage
+
+```bash
+make destroy
+```

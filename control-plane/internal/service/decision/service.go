@@ -2,19 +2,25 @@ package decision
 
 import (
 	"context"
-	"fmt"
-	"time"
+
+	"github.com/google/uuid"
 
 	"control-plane/internal/domain/model"
 	"control-plane/internal/service/policy"
 )
 
 type Service struct {
-	policy *policy.Service
+	policy     *policy.Service
+	ttlSeconds int
 }
 
-func New(policySvc *policy.Service) *Service {
-	return &Service{policy: policySvc}
+// New creates the decision service. ttlSeconds is the advertised cache TTL
+// returned to the gateway for each decision (default: 60).
+func New(policySvc *policy.Service, ttlSeconds int) *Service {
+	if ttlSeconds <= 0 {
+		ttlSeconds = 60
+	}
+	return &Service{policy: policySvc, ttlSeconds: ttlSeconds}
 }
 
 type AuthorizeRequest struct {
@@ -31,12 +37,13 @@ func (s *Service) Authorize(ctx context.Context, req AuthorizeRequest) (model.De
 	}
 
 	effect, reason := s.policy.Evaluate(snapshot, req.Subject, req.Action, req.Resource)
-	decisionID := fmt.Sprintf("dec-%d", time.Now().UTC().UnixNano())
+	// Use UUID v4 to guarantee global uniqueness even under concurrent load.
+	decisionID := "dec-" + uuid.New().String()
 
 	return model.Decision{
 		Effect:        effect,
 		Reason:        reason,
-		TTLSeconds:    60,
+		TTLSeconds:    s.ttlSeconds,
 		PolicyVersion: snapshot.Version.ID,
 		DecisionID:    decisionID,
 	}, nil

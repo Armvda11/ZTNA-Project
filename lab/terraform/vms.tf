@@ -212,8 +212,16 @@ resource "libvirt_cloudinit_disk" "lan_app_ci" {
   user_data      = templatefile("${path.module}/cloudinit/user-data.tpl", {
     hostname       = "lan-app"
     ssh_public_key = var.ssh_public_key
-    extra_packages = []
-    runcmd_extra   = []
+    extra_packages = ["nginx"]
+    runcmd_extra   = [
+      # Nginx : page de démonstration ZTNA
+      "echo '<html><body><h1>ZTNA Lab - lan-app</h1><p>Accès autorisé via ZTNA</p></body></html>' > /var/www/html/index.html",
+      "systemctl enable --now nginx",
+      # SSH CA : configurer sshd pour faire confiance aux certificats signés par le CP
+      # (exécuté au boot ; le CP peut ne pas être dispo → le script de déploiement reconfigurera)
+      "mkdir -p /etc/ssh/auth_principals",
+      "echo 'ztna' > /etc/ssh/auth_principals/ztna"
+    ]
   })
   network_config = templatefile("${path.module}/cloudinit/network-config.tpl", {
     interfaces = [
@@ -266,7 +274,10 @@ resource "libvirt_cloudinit_disk" "lan_admin_ci" {
     hostname       = "lan-admin"
     ssh_public_key = var.ssh_public_key
     extra_packages = []
-    runcmd_extra   = []
+    runcmd_extra   = [
+      "mkdir -p /etc/ssh/auth_principals",
+      "echo 'ztna' > /etc/ssh/auth_principals/ztna"
+    ]
   })
   network_config = templatefile("${path.module}/cloudinit/network-config.tpl", {
     interfaces = [

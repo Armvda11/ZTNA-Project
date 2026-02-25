@@ -1,0 +1,42 @@
+# ZTNA CLI Cheat Sheet (Lab)
+
+# 0) Build
+cd /home/hermas/Documents/ZTNA-Project
+make build-cli
+export ZTNA=./ztna-cli/ztna-linux-amd64
+
+# 1) Flux 2 nominal (OIDC -> enroll -> mTLS connect HTTP)
+$ZTNA init --profile lab
+$ZTNA login --username alice --password 'Password123!'
+$ZTNA enroll
+$ZTNA connect http:lan-app:80 --http-probe --http-path /
+$ZTNA status
+$ZTNA revoke-status
+
+# 2) Flux 2 en mode tunnel local (cas concret navigateur/curl)
+$ZTNA connect http:lan-app:80 --local-port 18080
+# autre terminal:
+curl -i http://127.0.0.1:18080/
+
+# 3) Cas refus policy/route (attendu: deny)
+$ZTNA connect http:unknown:80 --http-probe --http-path /
+echo $?
+
+# 4) Cas révocation réelle (attendu: revoked puis deny)
+export STATE=~/.ztna/state.json
+export TOKEN=$(jq -r '.token.access_token' "$STATE")
+export SERIAL=$(jq -r '.device.serial' "$STATE")
+
+curl -sk -X DELETE \
+  "https://10.10.20.30:8080/api/v1/admin/device-certs/${SERIAL}" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"manual-test"}'
+
+$ZTNA revoke-status
+$ZTNA connect http:lan-app:80 --http-probe --http-path /
+echo $?
+
+# 5) Retour état OK après révocation
+$ZTNA enroll --force-new-key
+$ZTNA connect http:lan-app:80 --http-probe --http-path /

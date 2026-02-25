@@ -1,0 +1,35 @@
+listen_addr: "0.0.0.0:4433"
+gateway_id:  "ztna-gw-01"
+
+cp_url:          "https://10.10.20.30:8080"
+cp_auth_mode:    "token" # lab fallback; production default is mtls
+cp_ca_cert:      "/etc/ztna/certs/ca.crt"
+cp_client_cert:  "/etc/ztna/certs/pep.crt"
+cp_client_key:   "/etc/ztna/certs/pep.key"
+pep_id:          "ztna-gw-01"
+pep_token:       "ztna-lab-pep-secret-2026"
+cp_tls_insecure: true
+heartbeat_every: 30s
+require_registration: true
+strict_revocation: false # lab fallback to avoid bootstrap deadlock; set true in hardened env
+decision_cache_ttl: 60s
+decision_cache_max_entries: 5000
+cp_down_mode: "deny"
+
+tls:
+  device_ca_cert: ""   # vide = auto-fetch depuis le CP au demarrage
+  server_cert:    ""   # vide = certificat ephemere auto-genere
+  server_key:     ""
+
+routes:
+  - resource_type:  "ssh"
+    resource_match: "ssh:lan-app:22"
+    target:         "10.10.30.10:22"
+
+  - resource_type:  "http"
+    resource_match: "http:lan-app:80"
+    target:         "10.10.30.10:80"
+
+  - resource_type:  "ssh"
+    resource_match: "ssh:lan-admin:22"
+    target:         "10.10.30.11:22"

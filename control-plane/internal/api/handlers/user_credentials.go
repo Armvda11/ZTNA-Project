@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -73,7 +74,7 @@ func (h *CredentialsHandler) IssueSSHCert(w http.ResponseWriter, r *http.Request
 	}
 
 	sourceIP := extractRemoteIP(r)
-	_ = h.audit.Append(r.Context(), model.AuditEvent{
+	if appendErr := h.audit.Append(r.Context(), model.AuditEvent{
 		Subject:       formatSubjectForAudit(subject),
 		Action:        "issue_ssh_cert",
 		Resource:      "ssh_cert",
@@ -82,7 +83,9 @@ func (h *CredentialsHandler) IssueSSHCert(w http.ResponseWriter, r *http.Request
 		PepID:         "",
 		SourceIP:      sourceIP,
 		PolicyVersion: 0,
-	})
+	}); appendErr != nil {
+		slog.Error("audit append failed", "action", "issue_ssh_cert", "err", appendErr)
+	}
 
 	writeJSON(w, http.StatusOK, sshCertResponse{
 		Certificate: resp.Certificate,

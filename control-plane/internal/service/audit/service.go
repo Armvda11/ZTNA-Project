@@ -5,24 +5,24 @@ import (
 	"time"
 
 	"control-plane/internal/domain/model"
-	"control-plane/internal/store/sqlite"
+	"control-plane/internal/domain/port"
 )
 
 type Service struct {
-	store *sqlite.Store
+	repo port.AuditRepository
 }
 
-func New(store *sqlite.Store) *Service {
-	return &Service{store: store}
+func New(repo port.AuditRepository) *Service {
+	return &Service{repo: repo}
 }
 
 func (s *Service) Append(ctx context.Context, event model.AuditEvent) error {
 	if event.Timestamp == "" {
 		event.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	}
-	return s.store.InsertAuditEvent(ctx, event)
+	return s.repo.InsertAuditEvent(ctx, event)
 }
 
-func (s *Service) List(ctx context.Context, limit int) ([]model.AuditEvent, error) {
-	return s.store.ListAuditEvents(ctx, limit)
+func (s *Service) List(ctx context.Context, limit, offset int) ([]model.AuditEvent, error) {
+	return s.repo.ListAuditEvents(ctx, limit, offset)
 }

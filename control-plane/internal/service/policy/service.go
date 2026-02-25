@@ -6,33 +6,46 @@ import (
 	"fmt"
 	"strings"
 
-	"control-plane/internal/domain/errors"
+	domainErrors "control-plane/internal/domain/errors"
 	"control-plane/internal/domain/model"
-	"control-plane/internal/store/sqlite"
+	domainPolicy "control-plane/internal/domain/policy"
+	"control-plane/internal/domain/port"
 )
 
+// Service manages policy versions and delegates evaluation to the domain
+// EvaluationEngine so the business logic remains testable without a database.
 type Service struct {
-	store *sqlite.Store
+	repo   port.PolicyRepository
+	engine *domainPolicy.EvaluationEngine
 }
 
-func New(store *sqlite.Store) *Service {
-	return &Service{store: store}
+func New(repo port.PolicyRepository) *Service {
+	return &Service{
+		repo:   repo,
+		engine: domainPolicy.NewEvaluationEngine(),
+	}
 }
 
 func (s *Service) CreateVersion(ctx context.Context, createdBy string, rules []model.PolicyRule) (int64, error) {
 	for i := range rules {
-		rules[i].Effect = strings.ToLower(rules[i].Effect)
+		// Normalise to lowercase.
+		rules[i].Effect = strings.ToLower(strings.TrimSpace(rules[i].Effect))
 		rules[i].Action = strings.ToLower(rules[i].Action)
 		rules[i].ResourceType = strings.ToLower(rules[i].ResourceType)
+
+		// Validate effect: must be strictly "allow" or "deny".
+		if err := domainPolicy.ValidateEffect(rules[i].Effect); err != nil {
+			return 0, fmt.Errorf("rule %d: %w", i, err)
+		}
 	}
 
-	return s.store.CreatePolicyVersion(ctx, createdBy, rules)
+	return s.repo.CreatePolicyVersion(ctx, createdBy, rules)
 }
 
 func (s *Service) ActivateVersion(ctx context.Context, id int64) error {
-	if err := s.store.ActivatePolicyVersion(ctx, id); err != nil {
+	if err := s.repo.ActivatePolicyVersion(ctx, id); err != nil {
 		if err == sql.ErrNoRows {
-			return errors.ErrNotFound
+			return domainErrors.ErrNotFound
 		}
 		return err
 	}
@@ -40,83 +53,25 @@ func (s *Service) ActivateVersion(ctx context.Context, id int64) error {
 }
 
 func (s *Service) GetActive(ctx context.Context) (model.PolicySnapshot, error) {
-	snapshot, err := s.store.GetActivePolicy(ctx)
+	snapshot, err := s.repo.GetActivePolicy(ctx)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return model.PolicySnapshot{}, errors.ErrNotFound
+			return model.PolicySnapshot{}, domainErrors.ErrNotFound
 		}
 		return model.PolicySnapshot{}, err
 	}
 	return snapshot, nil
 }
 
-func (s *Service) Evaluate(snapshot model.PolicySnapshot, subject model.Subject, action string, resource model.Resource) (model.DecisionEffect, string) {
-	canonicalResource := resource.Canonical()
-	for _, rule := range snapshot.Rules {
-		if !matchSubject(rule.SubjectMatch, subject) {
-			continue
-		}
-		if !matchAction(rule.Action, action) {
-			continue
-		}
-		if !matchResourceType(rule.ResourceType, string(resource.Type)) {
-			continue
-		}
-		if !matchResource(rule.ResourceMatch, canonicalResource) {
-			continue
-		}
-		reason := fmt.Sprintf("rule:%d", rule.ID)
-		if rule.Effect == "allow" {
-			return model.DecisionAllow, reason
-		}
-		return model.DecisionDeny, reason
-	}
-	return model.DecisionDeny, "default-deny"
+// Evaluate delegates to the pure EvaluationEngine in the domain layer.
+func (s *Service) Evaluate(
+	snapshot model.PolicySnapshot,
+	subject model.Subject,
+	action string,
+	resource model.Resource,
+) (model.DecisionEffect, string) {
+	return s.engine.Evaluate(snapshot, subject, action, resource)
 }
 
-func matchSubject(pattern string, subject model.Subject) bool {
-	if pattern == "*" {
-		return true
-	}
-	if strings.HasPrefix(pattern, "user:") {
-		return subject.Username == strings.TrimPrefix(pattern, "user:")
-	}
-	if strings.HasPrefix(pattern, "group:") {
-		group := strings.TrimPrefix(pattern, "group:")
-		for _, value := range subject.Groups {
-			if value == group {
-				return true
-			}
-		}
-		return false
-	}
-	if strings.HasPrefix(pattern, "sub:") {
-		return subject.Sub == strings.TrimPrefix(pattern, "sub:")
-	}
-	return false
-}
-
-func matchAction(pattern string, action string) bool {
-	if pattern == "*" {
-		return true
-	}
-	return strings.EqualFold(pattern, action)
-}
-
-func matchResourceType(pattern string, resourceType string) bool {
-	if pattern == "*" {
-		return true
-	}
-	return strings.EqualFold(pattern, resourceType)
-}
-
-func matchResource(pattern string, canonical string) bool {
-	if pattern == "*" {
-		return true
-	}
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
-		return strings.HasPrefix(canonical, prefix)
-	}
-	return pattern == canonical
-}
+// The matching helpers have been moved to internal/domain/policy/evaluation.go
+// and are exercised via EvaluationEngine.Evaluate.
