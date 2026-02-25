@@ -1,319 +1,286 @@
 # ============================================================================
-# ZTNA Lab – Makefile
+# ZTNA Lab — Makefile (clean interface)
 # ============================================================================
-# Toutes les cibles sont déclarées PHONY pour éviter qu'un fichier du même
-# nom ne masque une règle (comportement make standard).
-.PHONY: help \
-        up deploy deploy-gw destroy \
-        check check-vms check-networks check-ssh healthz \
-        status \
-        ssh-client ssh-gw ssh-cp ssh-app ssh-admin \
-        vm-list vm-start vm-stop vm-force-stop vm-reboot vm-console \
-        build-cp build-gw \
-        test test-unit test-flux1 test-flux2 test-flux2-local setup-routing \
-        fmt lint \
-        logs-cp logs-gw logs-keycloak logs-vm \
-        certs \
-        clean clean-all \
-        c s h
 
-# ── Chemins ────────────────────────────────────────────────────────────────
+.PHONY: help \
+        quickstart prereq \
+        up lab-start destroy \
+        deploy deploy-gw \
+        check status check-vms check-ssh healthz \
+        test-flux1 test-flux1-auto test-flux2 test-crl-routing test-pep-register test-cp-gw-lab \
+        ssh-client ssh-gw ssh-cp ssh-app ssh-admin \
+        vm-start vm-stop vm-force-stop vm-reboot vm-console \
+        logs-cp logs-gw clean \
+        build-cp build-gw build-cli test-unit test certs \
+        init check-requirements plan apply test-flux2-local setup-routing
+
 PROJECT_DIR   := $(shell pwd)
 TERRAFORM_DIR := $(PROJECT_DIR)/lab/terraform
+SSH_KEY       ?= $(HOME)/.ssh/id_ed25519
 
-# ── Clé SSH utilisée pour toutes les connexions aux VMs ───────────────────
-# Surcharger avec : make ssh-cp SSH_KEY=~/.ssh/autre_cle
-SSH_KEY ?= $(HOME)/.ssh/id_ed25519
-
-# ── IPs des VMs ────────────────────────────────────────────────────────────
 CP_IP     := 10.10.20.30
 GW_IP     := 10.10.10.20
 CLIENT_IP := 10.10.10.10
 APP_IP    := 10.10.30.10
 ADMIN_IP  := 10.10.30.11
 
-# ── Raccourci SSH (StrictHostKeyChecking désactivé pour le lab) ───────────
-SSH := ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i $(SSH_KEY)
-# SSH via jump host pour les VMs sur le réseau LAN (10.10.30.x)
+SSH   := ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i $(SSH_KEY)
 SSH_J := $(SSH) -J ztna@$(GW_IP)
+VIRSH := bash $(PROJECT_DIR)/scripts/virsh-lab
+TF    := bash $(PROJECT_DIR)/scripts/tf-lab
 
-# ── Couleurs terminal ──────────────────────────────────────────────────────
 RED    := \033[0;31m
 GREEN  := \033[0;32m
 YELLOW := \033[1;33m
 BLUE   := \033[0;34m
 NC     := \033[0m
 
-# ── Cible par défaut ───────────────────────────────────────────────────────
 .DEFAULT_GOAL := help
 
-help: ## Affiche cette aide
-	@echo "$(BLUE)╔══════════════════════════════════════════════════════════╗$(NC)"
-	@echo "$(BLUE)║  ZTNA Lab – Makefile                                     ║$(NC)"
-	@echo "$(BLUE)╚══════════════════════════════════════════════════════════╝$(NC)"
+help:
+	@echo "$(BLUE)ZTNA Lab — commandes principales$(NC)"
 	@echo ""
-	@echo "$(YELLOW)Quick Start :$(NC)"
-	@echo "  make up             # Créer le lab complet (5 VMs KVM)"
-	@echo "  make deploy         # Déployer control-plane + Keycloak"
-	@echo "  make deploy-gw      # Déployer la gateway ZTNA"
-	@echo "  make check          # Vérifier SSH + santé des services"
-	@echo "  make test-flux1     # Test bout en bout : SSH cert"
-	@echo "  make setup-routing  # Configurer MASQUERADE sur ztna-gw (1 fois)"
-	@echo "  make test-flux2     # Test Flux 2 mTLS exécuté depuis wan-client"
-	@echo "  make destroy        # Détruire toute l'infra"
+	@echo "$(YELLOW)Onboarding$(NC)"
+	@echo "  make prereq        Vérifier les prérequis minimum"
+	@echo "  make quickstart    Parcours recommandé: prereq -> up -> deploy -> deploy-gw -> check"
 	@echo ""
-	@echo "$(YELLOW)Toutes les cibles :$(NC)"
-	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort \
-	  | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-22s$(NC) %s\n", $$1, $$2}'
+	@echo "$(YELLOW)Infra$(NC)"
+	@echo "  make up            Créer / mettre à jour les VMs avec Terraform"
+	@echo "  make lab-start     Démarrer les VMs existantes + check SSH de base"
+	@echo "  make destroy       Détruire toute l'infrastructure"
 	@echo ""
+	@echo "$(YELLOW)Deploy$(NC)"
+	@echo "  make deploy        Déployer control-plane + Keycloak"
+	@echo "  make deploy-gw     Déployer gateway"
+	@echo ""
+	@echo "$(YELLOW)Checks$(NC)"
+	@echo "  make check         Check global (VMs + SSH + healthz)"
+	@echo "  make status        Alias de check"
+	@echo "  make check-ssh     Vérifier SSH WAN/DMZ"
+	@echo "  make healthz       Vérifier API CP + service gateway"
+	@echo ""
+	@echo "$(YELLOW)Tests$(NC)"
+	@echo "  make test-flux1"
+	@echo "  make test-flux1-auto"
+	@echo "  make test-flux2"
+	@echo "  make test-crl-routing"
+	@echo "  make test-pep-register"
+	@echo "  make test-cp-gw-lab"
+	@echo ""
+	@echo "$(YELLOW)Ops$(NC)"
+	@echo "  make ssh-client | ssh-gw | ssh-cp | ssh-app | ssh-admin"
+	@echo "  make vm-start | vm-stop | vm-reboot | vm-force-stop | vm-console VM=<nom>"
+	@echo "  make logs-cp | logs-gw"
+	@echo "  make clean"
+	@echo ""
+	@echo "$(YELLOW)Dev (optionnel)$(NC)"
+	@echo "  make build-cp | build-gw | build-cli | test-unit | test | certs"
+	@echo ""
+	@echo "$(BLUE)Compatibilité legacy:$(NC) init, check-requirements, plan, apply, test-flux2-local"
 
 # ============================================================================
-# GESTION DU LAB
+# ONBOARDING
 # ============================================================================
 
-up: ## Créer le lab complet (5 VMs KVM, 3 réseaux)
+prereq:
+	@bash ./scripts/check-requirements.sh
+
+quickstart: prereq up deploy deploy-gw check
+	@echo "$(GREEN)[✓]$(NC) Quickstart terminé"
+
+# ============================================================================
+# INFRA
+# ============================================================================
+
+up:
 	@bash ./scripts/lab-up-simple.sh
 
-deploy: ## Déployer control-plane + Keycloak sur ztna-cp
+lab-start:
+	@bash ./scripts/lab-start.sh
+
+destroy:
+	@echo "$(RED)[DANGER]$(NC) Cette opération est irréversible. Ctrl+C pour annuler, Entrée pour continuer."
+	@read _
+	@$(TF) destroy -auto-approve
+
+# ============================================================================
+# DEPLOY
+# ============================================================================
+
+deploy:
 	@bash ./scripts/deploy-control-plane.sh
 
-deploy-gw: build-gw ## Compiler + déployer le gateway sur ztna-gw
+deploy-gw: build-gw
 	@bash ./scripts/deploy-gateway.sh
 
-destroy: ## Détruire toute l'infrastructure (IRRÉVERSIBLE)
-	@echo "$(RED)[DANGER]$(NC) Destruction de l'infrastructure..."
-	@cd $(TERRAFORM_DIR) && terraform destroy -auto-approve
-	@echo "$(GREEN)[✓]$(NC) Infrastructure détruite"
-
 # ============================================================================
-# VÉRIFICATION
+# CHECKS
 # ============================================================================
 
-check: check-vms check-networks check-ssh healthz ## Vérification complète du lab
+check: check-vms check-ssh healthz
 
-check-vms: ## Lister l'état de toutes les VMs
-	@echo "$(BLUE)[INFO]$(NC) État des VMs :"
-	@echo ""
-	@virsh list --all
-	@echo ""
+status: check
 
-check-networks: ## Lister tous les réseaux libvirt
-	@echo "$(BLUE)[INFO]$(NC) Réseaux libvirt :"
-	@echo ""
-	@virsh net-list --all
-	@echo ""
+check-vms:
+	@$(VIRSH) list --all
 
-# check-ssh utilise la clé SSH configurée dans la variable SSH_KEY
-check-ssh: ## Vérifier la connectivité SSH vers les 3 VMs accessibles
-	@echo "$(BLUE)[INFO]$(NC) Vérification SSH (clé: $(SSH_KEY)) :"
-	@echo ""
-	@timeout 5 $(SSH) -o ConnectTimeout=3 ztna@$(CLIENT_IP) 'echo "  $(GREEN)✓$(NC) wan-client  ($(CLIENT_IP))"' 2>/dev/null \
-	  || echo "  $(RED)✗$(NC) wan-client  ($(CLIENT_IP)) - inaccessible"
-	@timeout 5 $(SSH) -o ConnectTimeout=3 ztna@$(GW_IP) 'echo "  $(GREEN)✓$(NC) ztna-gw     ($(GW_IP))"' 2>/dev/null \
-	  || echo "  $(RED)✗$(NC) ztna-gw     ($(GW_IP)) - inaccessible"
-	@timeout 5 $(SSH) -o ConnectTimeout=3 ztna@$(CP_IP) 'echo "  $(GREEN)✓$(NC) ztna-cp     ($(CP_IP))"' 2>/dev/null \
-	  || echo "  $(RED)✗$(NC) ztna-cp     ($(CP_IP)) - inaccessible"
-	@echo ""
+check-ssh:
+	@echo "$(BLUE)[SSH]$(NC)"
+	@timeout 5 $(SSH) -o ConnectTimeout=3 ztna@$(CLIENT_IP) 'echo "  ✓ wan-client ($(CLIENT_IP))"' 2>/dev/null || echo "  ✗ wan-client ($(CLIENT_IP))"
+	@timeout 5 $(SSH) -o ConnectTimeout=3 ztna@$(GW_IP) 'echo "  ✓ ztna-gw ($(GW_IP))"' 2>/dev/null || echo "  ✗ ztna-gw ($(GW_IP))"
+	@timeout 5 $(SSH) -o ConnectTimeout=3 ztna@$(CP_IP) 'echo "  ✓ ztna-cp ($(CP_IP))"' 2>/dev/null || echo "  ✗ ztna-cp ($(CP_IP))"
 
-healthz: ## Vérifier la santé du control-plane et du gateway
-	@echo "$(BLUE)[INFO]$(NC) Santé des services :"
-	@echo ""
-	@result=$$(curl -sfk --max-time 3 https://$(CP_IP):8080/healthz 2>/dev/null) && \
-	  echo "  $(GREEN)✓$(NC) CP  https://$(CP_IP):8080/healthz  → $$result" || \
-	  echo "  $(RED)✗$(NC) CP  https://$(CP_IP):8080/healthz  → non joignable"
-	@timeout 3 $(SSH) -o ConnectTimeout=2 ztna@$(GW_IP) \
-	  'systemctl is-active ztna-gateway >/dev/null 2>&1 && echo "  \033[0;32m✓\033[0m GW  ztna-gateway.service  → active" || echo "  \033[0;31m✗\033[0m GW  ztna-gateway.service  → inactif"' \
-	  2>/dev/null || echo "  $(RED)✗$(NC) GW  ztna-gateway.service  → VM inaccessible"
-	@echo ""
-
-status: ## Tableau de bord complet du lab (VMs + réseaux + SSH + santé)
-	@echo "$(BLUE)╔══════════════════════════════════════════════════════════╗$(NC)"
-	@echo "$(BLUE)║  État du Lab ZTNA                                        ║$(NC)"
-	@echo "$(BLUE)╚══════════════════════════════════════════════════════════╝$(NC)"
-	@echo ""
-	@$(MAKE) check-vms
-	@$(MAKE) check-networks
-	@$(MAKE) check-ssh
-	@$(MAKE) healthz
+healthz:
+	@echo "$(BLUE)[HEALTH]$(NC)"
+	@curl -sfk --max-time 3 https://$(CP_IP):8080/healthz >/dev/null 2>&1 \
+	  && echo "  ✓ control-plane https://$(CP_IP):8080/healthz" \
+	  || echo "  ✗ control-plane https://$(CP_IP):8080/healthz"
+	@timeout 4 $(SSH) -o ConnectTimeout=3 ztna@$(GW_IP) \
+	  'systemctl is-active ztna-gateway >/dev/null && echo "  ✓ gateway ztna-gateway.service" || echo "  ✗ gateway ztna-gateway.service"' \
+	  2>/dev/null || echo "  ✗ gateway (VM inaccessible)"
 
 # ============================================================================
-# CONNEXIONS SSH
+# TESTS
 # ============================================================================
-# Les VMs WAN (wan-client, ztna-gw, ztna-cp) sont directement accessibles.
-# Les VMs LAN (lan-app, lan-admin) passent par ztna-gw comme jump host.
 
-ssh-client: ## Se connecter à wan-client (10.10.10.10)
+test-flux1:
+	@ZTNA_USER=alice ZTNA_PASS='Password123!' bash ./scripts/test-ssh-cert-access.sh lan-app
+
+test-flux1-auto:
+	@ZTNA_USER=alice ZTNA_PASS='Password123!' SSH_TEST_CMD='hostname && id -un' \
+	  bash ./scripts/test-ssh-cert-access.sh lan-app
+
+test-flux2:
+	@$(SSH) ztna@$(CLIENT_IP) 'mkdir -p /home/ztna/ztna-scripts'
+	@scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i $(SSH_KEY) \
+	  ./scripts/test-mtls-access.sh ztna@$(CLIENT_IP):/home/ztna/ztna-scripts/
+	@$(SSH) ztna@$(CLIENT_IP) \
+	  'ZTNA_USER=alice ZTNA_PASS='"'"'Password123!'"'"' bash /home/ztna/ztna-scripts/test-mtls-access.sh http'
+
+test-crl-routing:
+	@$(SSH) ztna@$(CLIENT_IP) 'mkdir -p /home/ztna/ztna-scripts /home/ztna/.ssh'
+	@scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i $(SSH_KEY) \
+	  ./scripts/test-crl-sessions-routing.sh ztna@$(CLIENT_IP):/home/ztna/ztna-scripts/
+	@scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i $(SSH_KEY) \
+	  $(SSH_KEY) ztna@$(CLIENT_IP):/home/ztna/.ssh/id_ed25519
+	@$(SSH) ztna@$(CLIENT_IP) 'chmod 600 /home/ztna/.ssh/id_ed25519'
+	@$(SSH) ztna@$(CLIENT_IP) \
+	  'ZTNA_USER=alice ZTNA_PASS='"'"'Password123!'"'"' bash /home/ztna/ztna-scripts/test-crl-sessions-routing.sh'
+
+test-pep-register:
+	@bash ./scripts/test-pep-register-heartbeat.sh
+
+test-cp-gw-lab: test-flux1-auto test-flux2 test-crl-routing test-pep-register
+
+# ============================================================================
+# OPS
+# ============================================================================
+
+ssh-client:
 	@$(SSH) ztna@$(CLIENT_IP)
 
-ssh-gw: ## Se connecter à ztna-gw (10.10.10.20)
+ssh-gw:
 	@$(SSH) ztna@$(GW_IP)
 
-ssh-cp: ## Se connecter à ztna-cp (10.10.20.30)
+ssh-cp:
 	@$(SSH) ztna@$(CP_IP)
 
-ssh-app: ## Se connecter à lan-app via jump ztna-gw (10.10.30.10)
+ssh-app:
 	@$(SSH_J) ztna@$(APP_IP)
 
-ssh-admin: ## Se connecter à lan-admin via jump ztna-gw (10.10.30.11)
+ssh-admin:
 	@$(SSH_J) ztna@$(ADMIN_IP)
 
-# ============================================================================
-# GESTION DES VMs
-# ============================================================================
-
-vm-list: check-vms ## Liste les VMs (alias → check-vms)
-
-vm-start: ## Démarrer toutes les VMs
-	@echo "$(BLUE)[INFO]$(NC) Démarrage des VMs..."
+vm-start:
 	@for vm in wan-client ztna-gw ztna-cp lan-app lan-admin; do \
-		virsh start $$vm 2>/dev/null || echo "  $$vm déjà démarrée"; \
+		$(VIRSH) start $$vm >/dev/null 2>&1 && echo "  → $$vm démarré" || echo "  → $$vm déjà en marche"; \
 	done
-	@echo "$(GREEN)[✓]$(NC) VMs démarrées"
 
-vm-stop: ## Arrêter proprement toutes les VMs
-	@echo "$(BLUE)[INFO]$(NC) Arrêt des VMs..."
+vm-stop:
 	@for vm in wan-client ztna-gw ztna-cp lan-app lan-admin; do \
-		virsh shutdown $$vm 2>/dev/null || echo "  $$vm déjà arrêtée"; \
+		$(VIRSH) shutdown $$vm >/dev/null 2>&1 || true; \
 	done
-	@sleep 5
-	@echo "$(GREEN)[✓]$(NC) VMs arrêtées"
 
-vm-force-stop: ## Arrêter de force toutes les VMs
-	@echo "$(RED)[DANGER]$(NC) Arrêt de force des VMs..."
+vm-force-stop:
 	@for vm in wan-client ztna-gw ztna-cp lan-app lan-admin; do \
-		virsh destroy $$vm 2>/dev/null || echo "  $$vm déjà arrêtée"; \
+		$(VIRSH) destroy $$vm >/dev/null 2>&1 || true; \
 	done
-	@echo "$(GREEN)[✓]$(NC) VMs arrêtées de force"
 
-vm-reboot: ## Redémarrer toutes les VMs
-	@echo "$(BLUE)[INFO]$(NC) Redémarrage des VMs..."
+vm-reboot:
 	@for vm in wan-client ztna-gw ztna-cp lan-app lan-admin; do \
-		virsh reboot $$vm 2>/dev/null || echo "  $$vm non disponible"; \
+		$(VIRSH) reboot $$vm >/dev/null 2>&1 || true; \
 	done
-	@echo "$(GREEN)[✓]$(NC) Redémarrage en cours"
 
-vm-console: ## Ouvrir la console série d'une VM (make vm-console VM=wan-client)
-	@if [ -z "$(VM)" ]; then \
-		echo "$(RED)Erreur$(NC) : Spécifier VM=<nom>"; \
-		echo "VMs disponibles : wan-client ztna-gw ztna-cp lan-app lan-admin"; \
-		echo "Exemple : make vm-console VM=wan-client"; \
-	else \
-		virsh console $(VM); \
-	fi
+vm-console:
+	@[ -n "$(VM)" ] || { echo "Usage : make vm-console VM=<nom>"; exit 1; }
+	@$(VIRSH) console $(VM)
 
-# ============================================================================
-# NETTOYAGE
-# ============================================================================
+logs-cp:
+	@$(SSH) ztna@$(CP_IP) 'sudo journalctl -u ztna-cp -f --no-pager'
 
-clean: ## Nettoyer les artefacts de build et fichiers temporaires
-	@echo "$(BLUE)[INFO]$(NC) Nettoyage des artefacts..."
+logs-gw:
+	@$(SSH) ztna@$(GW_IP) 'sudo journalctl -u ztna-gateway -f --no-pager'
+
+clean:
 	@rm -f $(PROJECT_DIR)/control-plane/cp-linux-amd64
 	@rm -f $(PROJECT_DIR)/gateway/ztna-gateway-linux-amd64
+	@rm -f $(PROJECT_DIR)/ztna-cli/ztna-linux-amd64
+	@rm -f $(PROJECT_DIR)/ztna-cli/ztna
 	@rm -rf $(TERRAFORM_DIR)/.terraform/
 	@rm -rf /tmp/ztna-*
 	@echo "$(GREEN)[✓]$(NC) Nettoyage terminé"
 
-clean-all: destroy clean ## Détruire l'infra + nettoyer tous les artefacts
-	@echo "$(GREEN)[✓]$(NC) Nettoyage complet terminé"
-
 # ============================================================================
-# LOGS
+# DEV (OPTIONNEL)
 # ============================================================================
 
-logs-cp: ## Suivre les logs du control-plane sur ztna-cp
-	@$(SSH) ztna@$(CP_IP) 'sudo journalctl -u ztna-cp -f --no-pager'
-
-logs-gw: ## Suivre les logs du gateway sur ztna-gw
-	@$(SSH) ztna@$(GW_IP) 'sudo journalctl -u ztna-gateway -f --no-pager'
-
-logs-keycloak: ## Suivre les logs Keycloak sur ztna-cp
-	@$(SSH) ztna@$(CP_IP) 'cd ztna/control-plane/keycloak && docker-compose logs -f'
-
-logs-vm: ## Logs QEMU d'une VM locale (make logs-vm VM=wan-client)
-	@if [ -z "$(VM)" ]; then \
-		echo "$(RED)Erreur$(NC) : Spécifier VM=<nom>  ex: make logs-vm VM=wan-client"; \
-	else \
-		sudo tail -f /var/log/libvirt/qemu/$(VM).log; \
-	fi
-
-# ============================================================================
-# DÉVELOPPEMENT
-# ============================================================================
-# Les binaires sont compilés pour Linux amd64 (cible: VMs KVM).
-# Surcharger avec GOOS/GOARCH si nécessaire.
-
-build-cp: ## Compiler le control-plane (Linux amd64)
-	@echo "$(BLUE)[INFO]$(NC) Compilation du control-plane..."
+build-cp:
 	@cd control-plane && GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o cp-linux-amd64 .
-	@echo "$(GREEN)[✓]$(NC) Binaire : control-plane/cp-linux-amd64 ($$(du -sh control-plane/cp-linux-amd64 | cut -f1))"
+	@echo "$(GREEN)[✓]$(NC) control-plane/cp-linux-amd64"
 
-build-gw: ## Compiler le gateway ZTNA (Linux amd64)
-	@echo "$(BLUE)[INFO]$(NC) Compilation du gateway..."
+build-gw:
 	@cd gateway && GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ztna-gateway-linux-amd64 .
-	@echo "$(GREEN)[✓]$(NC) Binaire : gateway/ztna-gateway-linux-amd64 ($$(du -sh gateway/ztna-gateway-linux-amd64 | cut -f1))"
+	@echo "$(GREEN)[✓]$(NC) gateway/ztna-gateway-linux-amd64"
 
-test-unit: ## Lancer les tests unitaires (control-plane + gateway)
-	@echo "$(BLUE)[INFO]$(NC) Tests control-plane..."
-	@cd control-plane && go test ./... 2>&1
-	@echo "$(BLUE)[INFO]$(NC) Tests gateway..."
-	@cd gateway && go test ./... 2>&1
-	@echo "$(GREEN)[✓]$(NC) Tests terminés"
+build-cli:
+	@cd ztna-cli && GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ztna-linux-amd64 .
+	@echo "$(GREEN)[✓]$(NC) ztna-cli/ztna-linux-amd64"
 
-test: test-unit ## Alias pour test-unit
+test-unit:
+	@cd control-plane && go test ./...
+	@cd gateway && go test ./...
+	@cd ztna-cli && go test ./...
 
-# test-flux1 : validation bout en bout du flux SSH cert (nécessite les VMs up)
-test-flux1: ## Test d'intégration Flux 1 – SSH par certificat
-	@echo "$(BLUE)[INFO]$(NC) Flux 1 : SSH cert (alice → ztna-gw → lan-app)"
-	@ZTNA_USER=alice ZTNA_PASS='Password123!' bash ./scripts/test-ssh-cert-access.sh lan-app
+test: test-unit
 
-# setup-routing : configure MASQUERADE sur ztna-gw pour que wan-client puisse
-# atteindre les services DMZ (Keycloak 8081, CP 8080) à travers le gateway.
-# À exécuter UNE SEULE FOIS après la création du lab (ou après reboot de ztna-gw).
-setup-routing: ## Configurer iptables MASQUERADE WAN→DMZ sur ztna-gw
-	@echo "$(BLUE)[INFO]$(NC) Configuration du routage WAN→DMZ sur ztna-gw ($(GW_IP))..."
-	@$(SSH) ztna@$(GW_IP) 'bash -s' < ./scripts/setup-gw-routing.sh
-	@echo "$(GREEN)[✓]$(NC) Routage configuré — wan-client peut désormais atteindre le CP et Keycloak."
-
-# test-flux2 : validation bout en bout du flux mTLS HTTP depuis wan-client.
-# Le script est copié sur wan-client puis exécuté depuis la VM elle-même,
-# exactement comme dans un vrai système ZTNA (utilisateur distant → gateway).
-test-flux2: ## Test Flux 2 mTLS exécuté depuis wan-client ($(CLIENT_IP))
-	@echo "$(BLUE)[INFO]$(NC) Flux 2 : copie du script sur wan-client ($(CLIENT_IP))..."
-	@$(SSH) ztna@$(CLIENT_IP) 'mkdir -p /home/ztna/ztna-scripts'
-	@scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-	  -i $(SSH_KEY) \
-	  ./scripts/test-mtls-access.sh \
-	  ztna@$(CLIENT_IP):/home/ztna/ztna-scripts/test-mtls-access.sh
-	@echo "$(BLUE)[INFO]$(NC) Exécution du test depuis wan-client..."
-	@$(SSH) ztna@$(CLIENT_IP) \
-	  'ZTNA_USER=alice ZTNA_PASS='"'"'Password123!'"'"' bash /home/ztna/ztna-scripts/test-mtls-access.sh http'
-
-# test-flux2-local : version locale (tourne sur le host KVM, utile pour debug)
-test-flux2-local: ## Test Flux 2 mTLS local (depuis le host, pour debug)
-	@echo "$(BLUE)[INFO]$(NC) Flux 2 local : mTLS HTTP (depuis host → ztna-gateway:4433 → lan-app:80)"
-	@ZTNA_USER=alice ZTNA_PASS='Password123!' bash ./scripts/test-mtls-access.sh http
-
-fmt: ## Formater le code Go (control-plane + gateway)
-	@echo "$(BLUE)[INFO]$(NC) go fmt control-plane..."
-	@cd control-plane && go fmt ./...
-	@echo "$(BLUE)[INFO]$(NC) go fmt gateway..."
-	@cd gateway && go fmt ./...
-	@echo "$(GREEN)[✓]$(NC) Formatage terminé"
-
-lint: ## Analyser le code Go avec go vet
-	@echo "$(BLUE)[INFO]$(NC) go vet control-plane..."
-	@cd control-plane && go vet ./...
-	@echo "$(BLUE)[INFO]$(NC) go vet gateway..."
-	@cd gateway && go vet ./...
-	@echo "$(GREEN)[✓]$(NC) Analyse terminée"
-
-certs: ## Régénérer les certificats mTLS server/CA/PEP
+certs:
 	@bash ./scripts/gen-tls-certs.sh
 
 # ============================================================================
-# RACCOURCIS
+# LEGACY ALIASES (temporaires)
 # ============================================================================
 
-c: check  ## Alias → check
-s: status ## Alias → status
-h: help   ## Alias → help
+init:
+	@echo "$(YELLOW)[DEPRECATED]$(NC) 'make init' -> utilisez 'make up'"
+	@$(MAKE) up
+
+check-requirements:
+	@echo "$(YELLOW)[DEPRECATED]$(NC) 'make check-requirements' -> utilisez 'make prereq'"
+	@$(MAKE) prereq
+
+plan:
+	@echo "$(YELLOW)[DEPRECATED]$(NC) 'make plan' -> utilisez 'bash scripts/tf-lab plan -var-file=terraform.tfvars'"
+	@$(TF) plan -var-file=terraform.tfvars
+
+apply:
+	@echo "$(YELLOW)[DEPRECATED]$(NC) 'make apply' -> utilisez 'make up'"
+	@$(MAKE) up
+
+test-flux2-local:
+	@echo "$(YELLOW)[DEPRECATED]$(NC) 'make test-flux2-local' -> utilisez 'make test-flux2'"
+	@$(MAKE) test-flux2
+
+# Conservé pour compatibilité avec docs/tests existants.
+setup-routing:
+	@$(SSH) ztna@$(GW_IP) 'bash -s' < ./scripts/setup-gw-routing.sh
+	@echo "$(GREEN)[✓]$(NC) Routage WAN→DMZ configuré"

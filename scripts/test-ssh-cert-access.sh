@@ -26,6 +26,7 @@ ZTNA_USER="${ZTNA_USER:-}"
 ZTNA_PASS="${ZTNA_PASS:-}"
 TARGET="${1:-lan-app}"
 ZTNA_DIR="${HOME}/.ztna"
+SSH_TEST_CMD="${SSH_TEST_CMD:-}"
 # ──────────────────────────────────────────────────────────────────────────────
 
 log()  { echo "[$(date +%H:%M:%S)] $*"; }
@@ -106,6 +107,22 @@ log "  $(ssh-keygen -L -f "${CERT_FILE}" 2>/dev/null | grep -E 'Type|Key ID|Vali
 step "4/4 — Connexion SSH via jump host ztna-gw → ${TARGET} (${TARGET_IP})"
 # ──────────────────────────────────────────────────────────────────────────────
 log "Connexion : SSH -J ztna@${GW_HOST} ztna@${TARGET_IP}"
+
+if [[ -n "${SSH_TEST_CMD}" ]]; then
+  log "Mode non-interactif activé (SSH_TEST_CMD='${SSH_TEST_CMD}')"
+  ssh \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o LogLevel=ERROR \
+    -i "${KEY_FILE}" \
+    -i "${CERT_FILE}" \
+    -J "ztna@${GW_HOST}" \
+    "ztna@${TARGET_IP}" \
+    "${SSH_TEST_CMD}"
+  log "✓ Test SSH cert non-interactif réussi"
+  exit 0
+fi
+
 echo
 echo "─────────────────────────────────────────────────────────────"
 echo "  Session SSH interactive — tapez 'exit' pour terminer"

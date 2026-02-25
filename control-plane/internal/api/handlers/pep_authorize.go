@@ -15,17 +15,30 @@ import (
 	"control-plane/internal/logger"
 	"control-plane/internal/service/audit"
 	"control-plane/internal/service/decision"
+	"control-plane/internal/service/gateway"
 )
 
 type PEPHandler struct {
-	decision *decision.Service
-	audit    *audit.Service
+	decision            *decision.Service
+	audit               *audit.Service
+	gatewaySvc          *gateway.Service
+	requireRegistration bool
 }
 
 // NewPEPHandler crée un handler PEP qui traite les requêtes d'autorisation
 // et journalise les décisions via le service d'audit.
-func NewPEPHandler(decisionSvc *decision.Service, auditSvc *audit.Service) *PEPHandler {
-	return &PEPHandler{decision: decisionSvc, audit: auditSvc}
+func NewPEPHandler(
+	decisionSvc *decision.Service,
+	auditSvc *audit.Service,
+	gatewaySvc *gateway.Service,
+	requireRegistration bool,
+) *PEPHandler {
+	return &PEPHandler{
+		decision:            decisionSvc,
+		audit:               auditSvc,
+		gatewaySvc:          gatewaySvc,
+		requireRegistration: requireRegistration,
+	}
 }
 
 type authorizeRequest struct {
@@ -123,6 +136,21 @@ func (h *PEPHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, domainErrors.ErrInvalidInput)
 		return
+	}
+	if h.requireRegistration && h.gatewaySvc != nil {
+		pepID := logger.PepIDFromContext(r.Context())
+		if pepID == "" {
+			writeError(w, domainErrors.ErrUnauthorized)
+			return
+		}
+		status, err := h.gatewaySvc.Status(r.Context(), pepID)
+		if err != nil || status != gateway.HeartbeatRegistered {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error":  domainErrors.ErrForbidden.Error(),
+				"status": string(status),
+			})
+			return
+		}
 	}
 	if req.Action == "" || req.Resource.Type == "" {
 		writeError(w, domainErrors.ErrInvalidInput)

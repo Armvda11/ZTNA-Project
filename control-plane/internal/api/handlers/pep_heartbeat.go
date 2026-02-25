@@ -11,12 +11,16 @@ import (
 
 // PEPHeartbeatHandler records liveness signals from registered gateways.
 type PEPHeartbeatHandler struct {
-	gatewaySvc *gateway.Service
+	gatewaySvc          *gateway.Service
+	requireRegistration bool
 }
 
 // NewPEPHeartbeatHandler creates the handler.
-func NewPEPHeartbeatHandler(svc *gateway.Service) *PEPHeartbeatHandler {
-	return &PEPHeartbeatHandler{gatewaySvc: svc}
+func NewPEPHeartbeatHandler(svc *gateway.Service, requireRegistration bool) *PEPHeartbeatHandler {
+	return &PEPHeartbeatHandler{
+		gatewaySvc:          svc,
+		requireRegistration: requireRegistration,
+	}
 }
 
 type heartbeatRequest struct {
@@ -38,11 +42,20 @@ func (h *PEPHeartbeatHandler) Beat(w http.ResponseWriter, r *http.Request) {
 	// Ignore decode errors — the body is optional.
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	if err := h.gatewaySvc.Heartbeat(r.Context(), pepID); err != nil {
-		// Not fatal: gateway might not be registered yet. Log and continue.
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "note": "gateway not registered"})
+	status, err := h.gatewaySvc.Heartbeat(r.Context(), pepID, req.Version)
+	if err != nil {
+		if err == domainErrors.ErrForbidden && h.requireRegistration {
+			writeJSON(w, http.StatusForbidden, map[string]string{"status": string(status)})
+			return
+		}
+		if !h.requireRegistration && status == gateway.HeartbeatUnregistered {
+			// Backward-compatible lab behavior when strict registration is disabled.
+			writeJSON(w, http.StatusOK, map[string]string{"status": string(status)})
+			return
+		}
+		writeError(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": string(status)})
 }

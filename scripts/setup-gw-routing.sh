@@ -26,14 +26,20 @@ die()  { echo "[ERREUR] $*" >&2; exit 1; }
 # ── Variables (surchargeables via l'environnement) ───────────────────────────
 WAN_IF="${WAN_IF:-ens3}"          # interface WAN de ztna-gw  (10.10.10.20)
 DMZ_IF="${DMZ_IF:-ens4}"          # interface DMZ de ztna-gw  (10.10.20.20)
+LAN_IF="${LAN_IF:-ens5}"          # interface LAN de ztna-gw  (10.10.30.20)
 CLIENT_IP="${CLIENT_IP:-10.10.10.10}"  # wan-client (source autorisée)
+WAN_NAT_IP="${WAN_NAT_IP:-10.10.10.1}" # passerelle libvirt WAN (NAT source vue sur GW)
+CLIENT_SOURCES="${CLIENT_SOURCES:-${CLIENT_IP},${WAN_NAT_IP}}"
 CP_IP="${CP_IP:-10.10.20.30}"         # ztna-cp    (destination autorisée)
 KC_PORT="${KC_PORT:-8081}"             # Keycloak OIDC
 CP_PORT="${CP_PORT:-8080}"             # Control Plane API
 WAN_CIDR="10.10.10.0/24"              # sous-réseau WAN (pour MASQUERADE)
+LAN_CIDR="${LAN_CIDR:-10.10.30.0/24}" # sous-réseau LAN (jamais accessible directement depuis WAN)
+
+IFS=',' read -r -a SOURCE_IPS <<< "${CLIENT_SOURCES}"
 
 log "Interfaces : WAN=${WAN_IF} DMZ=${DMZ_IF}"
-log "Client autorisé  : ${CLIENT_IP}"
+log "Sources WAN autorisées vers DMZ : ${CLIENT_SOURCES}"
 log "Destination CP   : ${CP_IP}  ports ${KC_PORT} (KC) ${CP_PORT} (CP)"
 
 # ── ip_forward ───────────────────────────────────────────────────────────────
@@ -61,39 +67,58 @@ else
   log "✓ FORWARD ESTABLISHED,RELATED déjà présent"
 fi
 
-# ── Règle 2 : WAN→DMZ TCP:8081 (Keycloak — obtention du token OIDC) ─────────
+ensure_forward_allow() {
+  local src_ip="$1"
+  local dst_port="$2"
+  local label="$3"
+  if ! sudo iptables -C FORWARD \
+         -i "$WAN_IF" -o "$DMZ_IF" \
+         -s "$src_ip" -d "$CP_IP" \
+         -p tcp --dport "$dst_port" \
+         -m state --state NEW,ESTABLISHED -j ACCEPT 2>/dev/null; then
+    sudo iptables -A FORWARD \
+      -i "$WAN_IF" -o "$DMZ_IF" \
+      -s "$src_ip" -d "$CP_IP" \
+      -p tcp --dport "$dst_port" \
+      -m state --state NEW,ESTABLISHED -j ACCEPT
+    log "✓ FORWARD ${src_ip} → ${CP_IP}:${dst_port}/tcp (${label}) ajouté"
+  else
+    log "✓ FORWARD ${src_ip} → ${CP_IP}:${dst_port}/tcp (${label}) déjà présent"
+  fi
+}
+
+# ── Règles 2/3 : WAN→DMZ TCP:8081 et 8080 pour chaque source autorisée ──────
+for src_ip in "${SOURCE_IPS[@]}"; do
+  src_ip="$(echo "${src_ip}" | xargs)"
+  [[ -z "${src_ip}" ]] && continue
+  ensure_forward_allow "${src_ip}" "${KC_PORT}" "Keycloak"
+  ensure_forward_allow "${src_ip}" "${CP_PORT}" "Control Plane"
+done
+
+# ── Règle 4 : WAN→LAN DROP explicite + LOG (Zero Trust — jamais de bypass PEP) ──
+# Cette règle est redondante avec la FORWARD policy DROP, mais elle est explicite :
+# - elle log les tentatives d'accès direct WAN→LAN (visibilité SOC)
+# - elle garantit qu'aucun paquet WAN ne peut atteindre le LAN sans passer par mTLS:4433
 if ! sudo iptables -C FORWARD \
-       -i "$WAN_IF" -o "$DMZ_IF" \
-       -s "$CLIENT_IP" -d "$CP_IP" \
-       -p tcp --dport "$KC_PORT" \
-       -m state --state NEW,ESTABLISHED -j ACCEPT 2>/dev/null; then
+       -i "$WAN_IF" -d "$LAN_CIDR" \
+       -m comment --comment "ZTNA: block WAN→LAN direct (bypass prevention)" \
+       -j DROP 2>/dev/null; then
+  # LOG d'abord (rate-limited pour éviter la saturation des logs)
   sudo iptables -A FORWARD \
-    -i "$WAN_IF" -o "$DMZ_IF" \
-    -s "$CLIENT_IP" -d "$CP_IP" \
-    -p tcp --dport "$KC_PORT" \
-    -m state --state NEW,ESTABLISHED -j ACCEPT
-  log "✓ FORWARD ${CLIENT_IP} → ${CP_IP}:${KC_PORT}/tcp (Keycloak) ajouté"
+    -i "$WAN_IF" -d "$LAN_CIDR" \
+    -m limit --limit 10/min --limit-burst 20 \
+    -j LOG --log-prefix "ZTNA-BLOCKED-WAN-LAN: " --log-level 4
+  # Puis DROP explicite
+  sudo iptables -A FORWARD \
+    -i "$WAN_IF" -d "$LAN_CIDR" \
+    -m comment --comment "ZTNA: block WAN→LAN direct (bypass prevention)" \
+    -j DROP
+  log "✓ FORWARD WAN→LAN BLOCKED explicitement (DROP + LOG) — Zero Trust"
 else
-  log "✓ FORWARD →${KC_PORT} déjà présent"
+  log "✓ FORWARD WAN→LAN DROP déjà présent"
 fi
 
-# ── Règle 3 : WAN→DMZ TCP:8080 (Control Plane — enrollment device cert) ──────
-if ! sudo iptables -C FORWARD \
-       -i "$WAN_IF" -o "$DMZ_IF" \
-       -s "$CLIENT_IP" -d "$CP_IP" \
-       -p tcp --dport "$CP_PORT" \
-       -m state --state NEW,ESTABLISHED -j ACCEPT 2>/dev/null; then
-  sudo iptables -A FORWARD \
-    -i "$WAN_IF" -o "$DMZ_IF" \
-    -s "$CLIENT_IP" -d "$CP_IP" \
-    -p tcp --dport "$CP_PORT" \
-    -m state --state NEW,ESTABLISHED -j ACCEPT
-  log "✓ FORWARD ${CLIENT_IP} → ${CP_IP}:${CP_PORT}/tcp (Control Plane) ajouté"
-else
-  log "✓ FORWARD →${CP_PORT} déjà présent"
-fi
-
-# ── Règle 4 : MASQUERADE WAN→DMZ (corriger l'asymétrie de routage) ───────────
+# ── Règle 5 : MASQUERADE WAN→DMZ (corriger l'asymétrie de routage) ───────────
 # Sans SNAT : ztna-cp répond avec dst=10.10.10.10 via sa GW par défaut (bridge KVM)
 # sans repasser par ztna-gw → TCP SYN sans SYN-ACK → connexion impossible.
 # Avec SNAT : ztna-cp voit src=10.10.20.20 (DMZ ztna-gw), retour garanti.
@@ -130,11 +155,18 @@ log "=== Politique appliquée (ZTNA strict) ==="
 log "  FORWARD default         : DROP"
 log "  FORWARD autorisé        :"
 log "    ESTABLISHED,RELATED                              (retour)"
-log "    ${CLIENT_IP} → ${CP_IP}:${KC_PORT}/tcp          (Keycloak OIDC)"
-log "    ${CLIENT_IP} → ${CP_IP}:${CP_PORT}/tcp          (Control Plane)"
+for src_ip in "${SOURCE_IPS[@]}"; do
+  src_ip="$(echo "${src_ip}" | xargs)"
+  [[ -z "${src_ip}" ]] && continue
+  log "    ${src_ip} → ${CP_IP}:${KC_PORT}/tcp          (Keycloak OIDC)"
+  log "    ${src_ip} → ${CP_IP}:${CP_PORT}/tcp          (Control Plane)"
+done
+log "  FORWARD explicitement bloqué :"
+log "    WAN → ${LAN_CIDR} : DROP + LOG (aucun bypass PEP possible)"
 log "  NAT POSTROUTING         :"
 log "    MASQUERADE ${WAN_CIDR} → ${DMZ_IF}              (SNAT WAN→DMZ)"
-log "  Accès ressources LAN    : mTLS:4433 + PEP uniquement"
+log "    PAS de MASQUERADE WAN→LAN (la GW proxifie elle-même via mTLS:4433)"
+log "  Accès ressources LAN    : mTLS:4433 + PEP authorize uniquement"
 log ""
 echo "--- iptables FORWARD ---"
 sudo iptables -L FORWARD -n --line-numbers -v 2>/dev/null || true

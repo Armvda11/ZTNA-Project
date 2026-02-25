@@ -32,7 +32,9 @@ type Dependencies struct {
 	PKIHandler          *handlers.PKIHandler
 	AdminDeviceCerts    *handlers.AdminDeviceCertsHandler
 	PEPHandler          *handlers.PEPHandler
+	PEPRegisterHandler  *handlers.PEPRegisterHandler
 	PEPHeartbeatHandler *handlers.PEPHeartbeatHandler
+	PEPSessionHandler   *handlers.PEPSessionHandler // télémétrie de session
 	AdminPolicies       *handlers.AdminPoliciesHandler
 	AdminAudit          *handlers.AdminAuditHandler
 	WhoamiHandler       *handlers.WhoamiHandler
@@ -70,12 +72,20 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 			}
 		})
 
+		// Token mode exposes PEP endpoints on the public API listener.
 		if cfg.PEP.AuthMode != "mtls" {
 			r.Route("/pep", func(r chi.Router) {
 				r.Use(deps.PEPAuth.RequirePEP)
+				if deps.PEPRegisterHandler != nil {
+					r.Post("/register", deps.PEPRegisterHandler.Register)
+				}
 				r.Post("/authorize", deps.PEPHandler.Authorize)
 				if deps.PEPHeartbeatHandler != nil {
 					r.Post("/heartbeat", deps.PEPHeartbeatHandler.Beat)
+				}
+				if deps.PEPSessionHandler != nil {
+					r.Post("/sessions/start", deps.PEPSessionHandler.Start)
+					r.Post("/sessions/end", deps.PEPSessionHandler.End)
 				}
 			})
 		}
@@ -89,6 +99,9 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 			r.Get("/audit", deps.AdminAudit.List)
 			if deps.AdminDeviceCerts != nil {
 				r.Delete("/device-certs/{serial}", deps.AdminDeviceCerts.Revoke)
+			}
+			if deps.PEPSessionHandler != nil {
+				r.Get("/sessions", deps.PEPSessionHandler.List)
 			}
 		})
 	})
@@ -121,6 +134,7 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 	var pepServer *http.Server
 	pepCert := ""
 	pepKey := ""
+	// mTLS mode isolates PEP traffic on a dedicated listener/port.
 	if cfg.PEP.AuthMode == "mtls" {
 		pepRouter := chi.NewRouter()
 		pepRouter.Use(chimw.Recoverer)
@@ -130,9 +144,16 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 		}
 		pepRouter.Route("/api/v1/pep", func(r chi.Router) {
 			r.Use(deps.PEPAuth.RequirePEP)
+			if deps.PEPRegisterHandler != nil {
+				r.Post("/register", deps.PEPRegisterHandler.Register)
+			}
 			r.Post("/authorize", deps.PEPHandler.Authorize)
 			if deps.PEPHeartbeatHandler != nil {
 				r.Post("/heartbeat", deps.PEPHeartbeatHandler.Beat)
+			}
+			if deps.PEPSessionHandler != nil {
+				r.Post("/sessions/start", deps.PEPSessionHandler.Start)
+				r.Post("/sessions/end", deps.PEPSessionHandler.End)
 			}
 		})
 

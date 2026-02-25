@@ -92,9 +92,11 @@ type OIDCConfig struct {
 // -------------------- PEP (gateway -> CP) auth --------------------
 
 type PEPConfig struct {
-	AuthMode           string            `yaml:"auth_mode"`            // "token" or "mtls"
-	Tokens             map[string]string `yaml:"tokens"`               // pep_id -> pep_token (token mode)
-	DecisionTTLSeconds int               `yaml:"decision_ttl_seconds"` // advertised cache TTL for gateway decisions
+	AuthMode            string            `yaml:"auth_mode"`            // "token" or "mtls"
+	Tokens              map[string]string `yaml:"tokens"`               // pep_id -> pep_token (token mode)
+	DecisionTTLSeconds  int               `yaml:"decision_ttl_seconds"` // advertised cache TTL for gateway decisions
+	RequireRegistration *bool             `yaml:"require_registration"` // if true, heartbeat/authorize require prior /pep/register
+	RevokedPEPIDs       []string          `yaml:"revoked_pep_ids"`      // explicit deny-list for compromised PEP identities
 }
 
 // -------------------- SSH CA (user certs) --------------------
@@ -298,6 +300,11 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("pep_server.tls.client_ca_file is required when pep.auth_mode=mtls")
 		}
 	}
+	for _, pepID := range c.PEP.RevokedPEPIDs {
+		if strings.TrimSpace(pepID) == "" {
+			return fmt.Errorf("pep.revoked_pep_ids must not contain empty values")
+		}
+	}
 
 	return nil
 }
@@ -328,7 +335,10 @@ func applyDefaults(cfg *Config) {
 
 	// pep auth
 	if cfg.PEP.AuthMode == "" {
-		cfg.PEP.AuthMode = "token"
+		cfg.PEP.AuthMode = "mtls"
+	}
+	if cfg.PEP.DecisionTTLSeconds <= 0 {
+		cfg.PEP.DecisionTTLSeconds = 60
 	}
 	if cfg.PEP.AuthMode == "mtls" {
 		applyServerDefaults(&cfg.PEPServer, 8443)
@@ -385,6 +395,14 @@ func applyDefaults(cfg *Config) {
 	if cfg.Logging.Format == "" {
 		cfg.Logging.Format = "json"
 	}
+}
+
+// PEPRequireRegistrationEnabled returns true by default when unset.
+func (c *Config) PEPRequireRegistrationEnabled() bool {
+	if c.PEP.RequireRegistration == nil {
+		return true
+	}
+	return *c.PEP.RequireRegistration
 }
 
 func applyServerDefaults(server *ServerConfig, defaultPort int) {

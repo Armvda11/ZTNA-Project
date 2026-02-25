@@ -10,11 +10,16 @@ import (
 )
 
 type PEPAuth struct {
-	cfg config.PEPConfig
+	cfg        config.PEPConfig
+	revokedSet map[string]struct{}
 }
 
 func NewPEPAuth(cfg config.PEPConfig) *PEPAuth {
-	return &PEPAuth{cfg: cfg}
+	revoked := make(map[string]struct{}, len(cfg.RevokedPEPIDs))
+	for _, id := range cfg.RevokedPEPIDs {
+		revoked[id] = struct{}{}
+	}
+	return &PEPAuth{cfg: cfg, revokedSet: revoked}
 }
 
 func (p *PEPAuth) RequirePEP(next http.Handler) http.Handler {
@@ -25,6 +30,10 @@ func (p *PEPAuth) RequirePEP(next http.Handler) http.Handler {
 				return
 			}
 			pepID := r.TLS.PeerCertificates[0].Subject.CommonName
+			if p.isRevoked(pepID) {
+				writeError(w, domainErrors.ErrForbidden)
+				return
+			}
 			ctx := logger.WithPepID(r.Context(), pepID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
@@ -47,8 +56,17 @@ func (p *PEPAuth) RequirePEP(next http.Handler) http.Handler {
 			writeError(w, domainErrors.ErrUnauthorized)
 			return
 		}
+		if p.isRevoked(pepID) {
+			writeError(w, domainErrors.ErrForbidden)
+			return
+		}
 
 		ctx := logger.WithPepID(r.Context(), pepID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func (p *PEPAuth) isRevoked(pepID string) bool {
+	_, ok := p.revokedSet[pepID]
+	return ok
 }

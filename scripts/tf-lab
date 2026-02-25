@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# tf-lab — exécute terraform via sg libvirt (même groupe nécessaire pour QEMU)
+# Usage : bash scripts/tf-lab apply -auto-approve
+#
+# Le provider libvirt Terraform a besoin du même accès au socket QEMU.
+
+TF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../lab/terraform" && pwd)"
+ARGS=$(printf '%q ' "$@")
+exec sg libvirt -c "cd ${TF_DIR} && terraform ${ARGS}"

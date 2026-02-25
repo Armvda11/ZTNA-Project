@@ -19,6 +19,7 @@ import (
 	"control-plane/internal/service/decision"
 	"control-plane/internal/service/gateway"
 	"control-plane/internal/service/policy"
+	"control-plane/internal/service/session"
 	"control-plane/internal/store/sqlite"
 )
 
@@ -30,6 +31,7 @@ type App struct {
 }
 
 func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error) {
+	// Bootstrap order matters: storage and CAs must be ready before services/handlers.
 	store, err := sqlite.Open(cfg.Database.Path, cfg.BusyTimeout(), cfg.Database.Pragmas)
 	if err != nil {
 		return nil, err
@@ -47,12 +49,15 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 		return nil, fmt.Errorf("init device ca: %w", err)
 	}
 
+	// Build domain services once and inject them into handlers.
 	policySvc := policy.New(store)
 	auditSvc := audit.New(store)
 	credsSvc := credentials.New(ca, cfg.SSHCA, store)
 	deviceCredsSvc := credentials.NewDeviceCertService(deviceCA, cfg.DeviceCA, store)
 	gatewaySvc := gateway.New(store)
 	decisionSvc := decision.New(policySvc, cfg.PEP.DecisionTTLSeconds)
+	sessionSvc := session.New(store)
+	// Seed policy is idempotent and only runs on empty DB.
 	if err := policySvc.SeedIfEmpty(ctx, cfg.Policy.SeedFile); err != nil {
 		_ = store.Close()
 		return nil, err
@@ -76,8 +81,10 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 		DeviceCertHandler:   handlers.NewDeviceCertHandler(deviceCredsSvc, auditSvc),
 		PKIHandler:          handlers.NewPKIHandler(deviceCredsSvc, credsSvc),
 		AdminDeviceCerts:    handlers.NewAdminDeviceCertsHandler(deviceCredsSvc, auditSvc),
-		PEPHandler:          handlers.NewPEPHandler(decisionSvc, auditSvc),
-		PEPHeartbeatHandler: handlers.NewPEPHeartbeatHandler(gatewaySvc),
+		PEPHandler:          handlers.NewPEPHandler(decisionSvc, auditSvc, gatewaySvc, cfg.PEPRequireRegistrationEnabled()),
+		PEPRegisterHandler:  handlers.NewPEPRegisterHandler(gatewaySvc),
+		PEPHeartbeatHandler: handlers.NewPEPHeartbeatHandler(gatewaySvc, cfg.PEPRequireRegistrationEnabled()),
+		PEPSessionHandler:   handlers.NewPEPSessionHandler(sessionSvc),
 		AdminPolicies:       handlers.NewAdminPoliciesHandler(policySvc, auditSvc),
 		AdminAudit:          handlers.NewAdminAuditHandler(auditSvc),
 		WhoamiHandler:       handlers.NewWhoamiHandler(),

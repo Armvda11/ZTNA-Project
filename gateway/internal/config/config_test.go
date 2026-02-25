@@ -11,10 +11,14 @@ func TestLoad_ValidConfig(t *testing.T) {
 listen_addr: "0.0.0.0:4433"
 gateway_id: "gw-test"
 cp_url: "https://10.10.20.30:8080"
+cp_auth_mode: "token"
 pep_id: "gw-test"
 pep_token: "secret"
 cp_tls_insecure: true
 heartbeat_every: 30s
+decision_cache_ttl: 45s
+decision_cache_max_entries: 1234
+cp_down_mode: "cache_allow"
 routes:
   - resource_type: "ssh"
     resource_match: "ssh:lan-app:22"
@@ -43,6 +47,15 @@ routes:
 	}
 	if cfg.HeartbeatEvery != 30*time.Second {
 		t.Errorf("HeartbeatEvery: %v", cfg.HeartbeatEvery)
+	}
+	if cfg.DecisionCacheTTL != 45*time.Second {
+		t.Errorf("DecisionCacheTTL: %v", cfg.DecisionCacheTTL)
+	}
+	if cfg.DecisionCacheMaxKeys != 1234 {
+		t.Errorf("DecisionCacheMaxKeys: %d", cfg.DecisionCacheMaxKeys)
+	}
+	if cfg.CPDownMode != "cache_allow" {
+		t.Errorf("CPDownMode: %q", cfg.CPDownMode)
 	}
 	if len(cfg.Routes) != 2 {
 		t.Errorf("Routes count: %d", len(cfg.Routes))

@@ -28,7 +28,7 @@ if [[ ! -f "${CP_DIR}/certs/ca.crt" ]]; then
     openssl req -new -key server.key -subj "/CN=ztna-cp" -out server.csr 2>/dev/null && \
     openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 365 -sha256 2>/dev/null && \
     openssl genrsa -out pep.key 2048 2>/dev/null && \
-    openssl req -new -key pep.key -subj "/CN=pep-gw-1" -out pep.csr 2>/dev/null && \
+    openssl req -new -key pep.key -subj "/CN=ztna-gw-01" -out pep.csr 2>/dev/null && \
     openssl x509 -req -in pep.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out pep.crt -days 365 -sha256 2>/dev/null)
   log "✓ Certificats générés"
 fi
@@ -95,7 +95,7 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "sudo systemctl daemon-reload && sudo systemctl enable --now ztna-cp"
+ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "sudo systemctl daemon-reload && sudo systemctl enable ztna-cp && sudo systemctl restart ztna-cp"
 sleep 3
 log "✓ Control-plane démarré"
 

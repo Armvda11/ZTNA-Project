@@ -1,189 +1,165 @@
 # ZTNA Gateway
 
-Le **Gateway** est le **Policy Enforcement Point (PEP)** réseau du système ZTNA. Il se trouve en DMZ, expose un port mTLS aux clients WAN, et proxifie le trafic vers les ressources internes uniquement après autorisation du Control Plane.
+Le gateway (GW) est le Policy Enforcement Point (PEP) reseau.
 
----
+Il fait 5 choses critiques:
+1. Exposer un endpoint mTLS pour les clients ZTNA
+2. Verifier le cert device client
+3. Appeler le control-plane pour la decision (`authorize`)
+4. Ouvrir le proxy TCP vers la ressource autorisee
+5. Appliquer CRL + heartbeat + telemetrie de session
 
-## Architecture interne
+## 1) Comment il fonctionne (vue runtime)
 
-```
-main.go
-└── internal/
-    ├── config/     # Chargement et validation de config.yaml
-    ├── pep/        # Client HTTP vers le CP PEP (/api/v1/pep/authorize)
-    ├── proxy/      # Listener mTLS + protocole ConnectRequest/Response + proxy TCP
-    └── tlsutil/    # Utilitaires TLS : chargement CA, génération cert éphémère
-```
+Pour chaque connexion client:
+1. Handshake TLS 1.3 avec cert client device
+2. Lecture d'un `ConnectRequest` JSON
+3. Resolution route locale (`resource_match -> target`)
+4. Appel CP `POST /api/v1/pep/authorize`
+5. Reponse `ConnectResponse` au client
+6. Si allowed: tunnel TCP bidirectionnel
 
----
+Boucles de fond:
+- register + heartbeat vers CP
+- refresh CRL + blocage certs revoques
+- kill sessions actives revoquees
+- cache de decisions (si active)
 
-## Protocole applicatif (couche au-dessus du mTLS)
+## 2) Protocole applicatif
 
-La connexion suit ce séquencement **après** le handshake TLS :
+### ConnectRequest (client -> GW)
 
-```
-Client                              Gateway                    Control Plane
-  │                                    │                            │
-  │── JSON newline ──────────────────► │                            │
-  │   {"resource_type":"http",         │                            │
-  │    "resource_match":"http:lan-app:80",                          │
-  │    "action":"connect"}             │                            │
-  │                                    │── POST /pep/authorize ───► │
-  │                                    │◄── {effect:"allow",...} ── │
-  │◄── JSON newline ─────────────────- │                            │
-  │   {"allowed":true,                 │                            │
-  │    "decision_id":"dec-..."}        │                            │
-  │                                    │                            │
-  │═══════ Proxy TCP brut ════════════►│════ TCP → lan-app:80 ═════►│
-```
-
-**Étapes :**
-1. Le client ouvre une connexion TLS en présentant son certificat Device (signé par la CA du CP).
-2. Le gateway vérifie le certificat client (mTLS : `RequireAndVerifyClientCert`).
-3. Le client envoie un `ConnectRequest` JSON terminé par `\n`.
-4. Le gateway extrait le sujet ZTNA depuis le certificat X.509 (`CN` = username, `O` = groups, `serialNumber` = sub).
-5. Le gateway appelle le CP PEP pour obtenir une décision.
-6. Le gateway répond avec `ConnectResponse` JSON terminé par `\n`.
-7. Si `allowed=true` : tunnel TCP bidirectionnel vers la ressource cible.
-
----
-
-## Format des messages
-
-### ConnectRequest (client → gateway)
 ```json
 {
-  "resource_type":  "http",
+  "resource_type": "http",
   "resource_match": "http:lan-app:80",
-  "action":         "connect"
+  "action": "connect"
 }
 ```
 
-**Types supportés :** `ssh`, `http`
+### ConnectResponse (GW -> client)
 
-**Format `resource_match` :** `<type>:<hostname>:<port>`
-
-### ConnectResponse (gateway → client)
 ```json
 {
-  "allowed":     true,
-  "decision_id": "dec-6f4e575d-5fdc-4be6-8ec9-118fd248ecf8",
-  "reason":      "rule:2"
+  "allowed": true,
+  "decision_id": "dec-...",
+  "reason": "rule:2"
 }
 ```
 
----
+Types supportes:
+- `http`
+- `ssh`
 
-## Configuration (`config.yaml`)
-
-```yaml
-listen_addr: "0.0.0.0:4433"   # Port mTLS exposé aux clients WAN
-
-# Identité de ce gateway auprès du Control Plane
-gateway_id:  "ztna-gw-01"
-pep_id:      "ztna-gw-01"
-pep_token:   "ztna-lab-pep-secret-2026"  # Doit correspondre à config.lab.yaml du CP
-
-# URL du Control Plane
-cp_url:          "https://10.10.20.30:8080"
-cp_tls_insecure: true   # En lab, le cert CP est self-signed → désactiver la vérification
-
-# TLS du gateway (optionnel — auto-généré si absent)
-# tls:
-#   server_cert:    "certs/gw.crt"
-#   server_key:     "certs/gw.key"
-#   device_ca_cert: "pki/ca.crt"    # Si absent, récupéré automatiquement depuis le CP
-```
-
----
-
-## Résolution des routes
-
-Le gateway résout `resource_match` en adresse TCP via la table de routes définie dans la config :
-
-```yaml
-routes:
-  - match: "ssh:lan-app:22"
-    target: "10.10.30.10:22"
-  - match: "http:lan-app:80"
-    target: "10.10.30.10:80"
-  - match: "ssh:lan-admin:22"
-    target: "10.10.30.11:22"
-```
-
-Si aucune route ne correspond, la connexion est refusée (pas d'accès direct par IP).
-
----
-
-## Démarrage
+## 3) Build et run
 
 ```bash
-# Build
 cd gateway
-GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ztna-gateway-linux-amd64 .
-
-# Lancer
+GOOS=linux GOARCH=amd64 go build -ldflags='-s -w' -o ztna-gateway-linux-amd64 .
 ./ztna-gateway-linux-amd64 -config config.yaml
 ```
 
-Au démarrage, si aucun cert Device CA n'est configuré localement, le gateway récupère automatiquement la CA depuis le CP (`GET /api/v1/cp/device-ca-cert`). Il réessaie 10 fois (backoff progressif) pour gérer le démarrage séquentiel CP → Gateway.
+## 4) Config a connaitre
 
----
+Champs cles dans `gateway/config.yaml`:
+- `listen_addr`: socket mTLS client
+- `gateway_id`: identite de ce GW
+- `cp_url`: URL CP
+- `cp_auth_mode`: `mtls` (cible) ou `token` (fallback lab)
+- `cp_ca_cert`, `cp_client_cert`, `cp_client_key`: trust CP
+- `cp_tls_insecure`: bypass TLS verification (lab uniquement)
+- `strict_revocation`: fail-close CRL
+- `decision_cache_ttl`, `decision_cache_max_entries`: cache authorize
+- `cp_down_mode`: `deny` ou `cache_allow`
+- `routes`: mapping des ressources vers targets LAN
 
-## Tests unitaires
+## 5) Exemples concrets - scripts
+
+Depuis la racine du projet:
 
 ```bash
-cd gateway
-go test ./...
+make up
+make deploy
+make deploy-gw
+make check
 ```
 
-**Couverture :**
-- `internal/proxy/server_test.go` — `buildAuthorizeRequest` pour SSH et HTTP
-- `internal/config/config_test.go` — validation de la configuration
+Tests qui prouvent le comportement gateway:
 
----
+```bash
+# Flux 2 nominal (mTLS + authorize + proxy)
+make test-flux2
 
-## Exemple de client Python (test mTLS)
+# Register + heartbeat strict
+make test-pep-register
 
-```python
-import ssl, socket, json
-
-# Contexte mTLS : présenter le certificat device
-ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-ctx.check_hostname = False
-ctx.verify_mode    = ssl.CERT_NONE
-ctx.minimum_version = ssl.TLSVersion.TLSv1_3
-ctx.load_cert_chain("~/.ztna/device_alice.crt", "~/.ztna/device_alice.key")
-
-raw = socket.create_connection(("10.10.10.20", 4433), timeout=15)
-tls = ctx.wrap_socket(raw)
-
-# 1. Envoyer ConnectRequest
-tls.sendall(json.dumps({
-    "resource_type":  "http",
-    "resource_match": "http:lan-app:80",
-    "action":         "connect"
-}).encode() + b"\n")
-
-# 2. Lire ConnectResponse
-resp = json.loads(tls.recv(4096).rstrip(b"\n"))
-if resp["allowed"]:
-    # 3. Tunnel TCP ouvert → envoyer HTTP directement
-    tls.sendall(b"GET / HTTP/1.0\r\nHost: lan-app\r\n\r\n")
-    print(tls.recv(4096).decode())
+# CRL + kill sessions + routage
+make test-crl-routing
 ```
 
-Voir `scripts/test-mtls-access.sh` pour le test complet avec obtention du token OIDC et du cert device.
+Logs runtime:
 
----
-
-## Logs structurés
-
-Le gateway produit des logs JSON sur stdout :
-
-```json
-{"time":"...","level":"INFO","msg":"ztna gateway listening","addr":"0.0.0.0:4433"}
-{"time":"...","level":"INFO","msg":"client connected","remote":"10.10.10.1:44166","username":"alice","sub":"1d584701-..."}
-{"time":"...","level":"INFO","msg":"access allowed","username":"alice","target":"10.10.30.10:80","decision_id":"dec-..."}
-{"time":"...","level":"ERROR","msg":"dial backend","target":"10.10.30.10:80","err":"connection refused"}
+```bash
+make logs-gw
 ```
+
+## 6) Exemples concrets - ztna-cli
+
+```bash
+cd /home/hermas/Documents/ZTNA-Project
+make build-cli
+export ZTNA=./ztna-cli/ztna-linux-amd64
+
+$ZTNA init --profile lab
+$ZTNA login --username alice --password 'Password123!'
+$ZTNA enroll
+
+# Test one-shot HTTP via gateway
+$ZTNA connect http:lan-app:80 --http-probe --http-path /
+
+# Test tunnel local
+$ZTNA connect http:lan-app:80 --local-port 18080
+curl -i http://127.0.0.1:18080/
+```
+
+## 7) Cas de test utiles pour le gateway
+
+### Cas deny (policy/route)
+
+```bash
+$ZTNA connect http:unknown:80 --http-probe --http-path /
+echo $?
+```
+
+Attendu:
+- `allowed=false`
+- code de sortie `6` (policy deny) ou `5` selon la cause
+
+### Cas cert revoque
+
+```bash
+$ZTNA revoke-status
+$ZTNA connect http:lan-app:80 --http-probe --http-path /
+echo $?
+```
+
+Attendu:
+- connexion refusee si cert present en CRL
+
+## 8) Ou regarder dans le code
+
+- `main.go`: bootstrap, register/heartbeat/CRL
+- `internal/config/config.go`: config validation
+- `internal/proxy/server.go`: listener mTLS, authorize, proxy, session tracking
+- `internal/pep/client.go`: appels HTTP vers CP (authorize/heartbeat/register/sessions)
+- `internal/crl/*`: cache CRL + refresh + kill revoked
+- `internal/decisioncache/*`: cache decisions
+- `internal/tlsutil/tlsutil.go`: cert pools, fingerprint, device CA fetch
+
+## 9) Notes de securite
+
+Pour un mode plus durci:
+- `cp_auth_mode=mtls`
+- `cp_tls_insecure=false`
+- `strict_revocation=true`
+- `cp_down_mode=deny`

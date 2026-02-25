@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,10 +15,13 @@ import (
 	"time"
 
 	"ztna-gateway/internal/config"
+	"ztna-gateway/internal/crl"
 	"ztna-gateway/internal/pep"
 	"ztna-gateway/internal/proxy"
 	"ztna-gateway/internal/tlsutil"
 )
+
+var version = "dev"
 
 func main() {
 	cfgPath := flag.String("config", "config.yaml", "path to gateway config file")
@@ -29,8 +35,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	cpHTTP := newHTTPClient(cfg.CPTLSInsecure)
+	cpHTTP, err := newCPHTTPClient(cfg)
+	if err != nil {
+		log.Error("failed to build CP HTTP client", slog.Any("err", err))
+		os.Exit(1)
+	}
 
+	// Startup sequence: resolve trust roots first, then open TLS listener.
 	// Load or fetch the Device CA certificate to verify client certs.
 	var caCertPEM []byte
 	if cfg.TLS.DeviceCACert != "" {
@@ -75,18 +86,43 @@ func main() {
 		MinVersion:   tls.VersionTLS13,
 	}
 
-	pepClient := pep.New(cfg.CPURL, cfg.PEPID, cfg.PEPToken, cpHTTP)
+	pepClient := pep.New(cfg.CPURL, cfg.PEPID, cfg.PEPToken, cfg.CPAuthMode, cpHTTP)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// CRL cache : chargé immédiatement au démarrage, rafraîchissement périodique.
+	// Si le CP est inaccessible au boot, on démarre avec une CRL vide (fail-open)
+	// et on log un avertissement fort. En prod, durcir en fail-closed ici.
+	crlCache := crl.New(log)
+	srv := proxy.New(cfg, pepClient, crlCache, log)
+	if err := crlCache.StartRefreshLoop(
+		ctx,
+		cfg.CRLRefreshInterval,
+		cfg.CPURL,
+		cpHTTP,
+		func() { srv.KillRevoked(crlCache) },
+		cfg.StrictRevocationEnabled(),
+	); err != nil {
+		log.Error("crl strict startup check failed", slog.Any("err", err))
+		os.Exit(1)
+	}
+
+	fingerprint := certFingerprint(serverCert)
+	if cfg.RequireRegistrationEnabled() {
+		if err := registerGateway(ctx, pepClient, cfg, fingerprint, log); err != nil {
+			log.Error("gateway registration failed", slog.Any("err", err))
+			os.Exit(1)
+		}
+	}
+
+	// Heartbeat is best-effort and should never block gateway traffic.
 	heartbeatInterval := cfg.HeartbeatEvery
 	if heartbeatInterval == 0 {
 		heartbeatInterval = 30 * time.Second
 	}
-	go heartbeatLoop(ctx, pepClient, heartbeatInterval, log)
+	go heartbeatLoop(ctx, pepClient, cfg, fingerprint, heartbeatInterval, log)
 
-	srv := proxy.New(cfg, pepClient, log)
 	if err := srv.ListenAndServe(ctx, tlsConfig); err != nil {
 		log.Error("gateway exited with error", slog.Any("err", err))
 		os.Exit(1)
@@ -95,19 +131,76 @@ func main() {
 	log.Info("gateway stopped")
 }
 
-func newHTTPClient(insecure bool) *http.Client {
-	if !insecure {
-		return &http.Client{Timeout: 10 * time.Second}
+func newCPHTTPClient(cfg *config.Config) (*http.Client, error) {
+	tlsCfg := &tls.Config{MinVersion: tls.VersionTLS13}
+	if cfg.CPTLSInsecure {
+		tlsCfg.InsecureSkipVerify = true //nolint:gosec
+	} else if cfg.CPCACert != "" {
+		pool, err := tlsutil.LoadCertPoolFromFile(cfg.CPCACert)
+		if err != nil {
+			return nil, err
+		}
+		tlsCfg.RootCAs = pool
+	} else {
+		// If not pinned explicitly, still use system roots.
+		pool, err := x509.SystemCertPool()
+		if err == nil && pool != nil {
+			tlsCfg.RootCAs = pool
+		}
 	}
+
+	if cfg.CPAuthMode == "mtls" {
+		cert, err := tls.LoadX509KeyPair(cfg.CPClientCert, cfg.CPClientKey)
+		if err != nil {
+			return nil, fmt.Errorf("load cp client cert/key: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+
 	return &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
-		},
-	}
+		Timeout:   10 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
+	}, nil
 }
 
-func heartbeatLoop(ctx context.Context, client *pep.Client, interval time.Duration, log *slog.Logger) {
+func registerGateway(
+	ctx context.Context,
+	client *pep.Client,
+	cfg *config.Config,
+	fingerprint string,
+	log *slog.Logger,
+) error {
+	var lastErr error
+	for attempt := 1; attempt <= 10; attempt++ {
+		err := client.Register(ctx, pep.RegisterRequest{
+			GatewayID:   cfg.GatewayID,
+			Name:        cfg.GatewayID,
+			Version:     version,
+			Fingerprint: fingerprint,
+		})
+		if err == nil {
+			log.Info("gateway registered", slog.String("gateway_id", cfg.GatewayID))
+			return nil
+		}
+		lastErr = err
+		log.Warn("register failed, retrying", slog.Int("attempt", attempt), slog.Any("err", err))
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(attempt) * time.Second):
+		}
+	}
+	return lastErr
+}
+
+func heartbeatLoop(
+	ctx context.Context,
+	client *pep.Client,
+	cfg *config.Config,
+	fingerprint string,
+	interval time.Duration,
+	log *slog.Logger,
+) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -115,11 +208,26 @@ func heartbeatLoop(ctx context.Context, client *pep.Client, interval time.Durati
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := client.Heartbeat(ctx); err != nil {
+			status, err := client.Heartbeat(ctx)
+			if err != nil {
+				var apiErr *pep.APIError
+				if cfg.RequireRegistrationEnabled() && errors.As(err, &apiErr) && apiErr.IsStatus(http.StatusForbidden) {
+					log.Warn("heartbeat rejected, attempting re-register", slog.String("status", apiErr.Status))
+					if regErr := registerGateway(ctx, client, cfg, fingerprint, log); regErr != nil {
+						log.Warn("re-register failed", slog.Any("err", regErr))
+					}
+				}
 				log.Warn("heartbeat failed", slog.Any("err", err))
 			} else {
-				log.Debug("heartbeat ok")
+				log.Debug("heartbeat ok", slog.String("status", status))
 			}
 		}
 	}
+}
+
+func certFingerprint(cert tls.Certificate) string {
+	if len(cert.Certificate) == 0 {
+		return ""
+	}
+	return tlsutil.CertFingerprintSHA256(cert.Certificate[0])
 }

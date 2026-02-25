@@ -50,6 +50,9 @@ oidc:
 
 pep:
   auth_mode: token
+  decision_ttl_seconds: 60
+  require_registration: true
+  revoked_pep_ids: []
   tokens:
     ztna-gw-01: "ztna-lab-pep-secret-2026"
 

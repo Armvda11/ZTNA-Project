@@ -485,7 +485,7 @@ make setup-routing
 make test-flux2
 
 # 3. Version locale (pour debug rapide depuis le host)
-make test-flux2-local
+make test-flux2
 ```
 
 ---

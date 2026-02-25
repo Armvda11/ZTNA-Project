@@ -5,14 +5,17 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -72,9 +75,11 @@ func FetchDeviceCACert(cpURL string, httpClient *http.Client) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("fetch device ca cert: status %d", resp.StatusCode)
 	}
-	buf := make([]byte, 8192)
-	n, _ := resp.Body.Read(buf)
-	return buf[:n], nil
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read device ca cert body: %w", err)
+	}
+	return data, nil
 }
 
 // BuildClientCertPool builds an x509.CertPool from PEM-encoded certificate data.
@@ -93,4 +98,27 @@ func LoadDeviceCACertFromFile(path string) ([]byte, error) {
 		return nil, fmt.Errorf("read device ca cert %s: %w", path, err)
 	}
 	return data, nil
+}
+
+// LoadCertPoolFromFile creates an x509.CertPool from a PEM file.
+func LoadCertPoolFromFile(path string) (*x509.CertPool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read cert pool file %s: %w", path, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(data) {
+		return nil, fmt.Errorf("parse cert pool file %s: no PEM cert found", path)
+	}
+	return pool, nil
+}
+
+// CertFingerprintSHA256 returns a colon-separated SHA256 fingerprint for logging/registration.
+func CertFingerprintSHA256(der []byte) string {
+	sum := sha256.Sum256(der)
+	parts := make([]string, 0, len(sum))
+	for _, b := range sum {
+		parts = append(parts, fmt.Sprintf("%02x", b))
+	}
+	return strings.Join(parts, ":")
 }

@@ -1,4 +1,4 @@
-# Index ZTNA Lab
+# Index Documentation ZTNA Lab
 
 ## Demarrer vite
 
@@ -6,34 +6,36 @@
 2. [../QUICKSTART.md](../QUICKSTART.md)
 3. [../README.md](../README.md)
 
-## Docs principales
+## Guides principaux
 
 - [ONBOARDING.md](ONBOARDING.md)
 - [../QUICKSTART.md](../QUICKSTART.md)
-- [../README.md](../README.md)
 - [REQUIREMENTS.md](REQUIREMENTS.md)
 - [SETUP.md](SETUP.md)
+- [TESTING.md](TESTING.md)
+- [CLI_ZTNA.md](CLI_ZTNA.md)
+- [CP_GW_RUNBOOK.md](CP_GW_RUNBOOK.md)
+- [CP_GW_FEATURES_TEST_MATRIX.md](CP_GW_FEATURES_TEST_MATRIX.md)
 - [../ARCHITECTURE.md](../ARCHITECTURE.md)
 - [../TROUBLESHOOTING.md](../TROUBLESHOOTING.md)
-- [../CONTRIBUTING.md](../CONTRIBUTING.md)
-- [CHANGELOG.md](CHANGELOG.md)
-- [../LICENSE](../LICENSE)
 
-## Scripts utiles
+## Scripts utilises
 
 - [../setup.sh](../setup.sh)
 - [../scripts/check-requirements.sh](../scripts/check-requirements.sh)
-- [../scripts/init-lab.sh](../scripts/init-lab.sh)
-- [../scripts/cleanup.sh](../scripts/cleanup.sh)
-- [../scripts/lab-up.sh](../scripts/lab-up.sh)
+- [../scripts/lab-up-simple.sh](../scripts/lab-up-simple.sh)
+- [../scripts/deploy-control-plane.sh](../scripts/deploy-control-plane.sh)
+- [../scripts/deploy-gateway.sh](../scripts/deploy-gateway.sh)
 
-## Commandes essentielles
+## Commandes recommandees
 
 ```bash
-./setup.sh
-make init
+make prereq
+make quickstart
 make check
-make ssh-client
-make ssh-gw
-make ssh-cp
+make test-flux1
+make test-flux1-auto
+make test-flux2
+make test-crl-routing
+make test-cp-gw-lab
 ```

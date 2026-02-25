@@ -35,11 +35,9 @@ step() { echo; echo "──── $* ────"; }
 # ──────────────────────────────────────────────────────────────────────────────
 step "1. Vérification des prérequis"
 # ──────────────────────────────────────────────────────────────────────────────
-if [[ ! -f "${GW_BIN}" ]]; then
-  log "Binaire non trouvé, compilation..."
-  (cd "${GW_DIR}" && GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ztna-gateway-linux-amd64 .)
-  log "✓ Binaire compilé"
-fi
+log "Compilation du gateway local..."
+(cd "${GW_DIR}" && GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ztna-gateway-linux-amd64 .)
+log "✓ Binaire compilé"
 
 # ──────────────────────────────────────────────────────────────────────────────
 step "2. Attente de ztna-gw"
@@ -60,6 +58,11 @@ step "3. Configuration de ztna-gw"
 log "Copie du binaire gateway..."
 ${SCP} "${GW_BIN}" ${USER}@${GW_HOST}:/tmp/ztna-gateway
 ${SCP} "${GW_DIR}/config.yaml" ${USER}@${GW_HOST}:/tmp/gateway.yaml
+if [[ -f "${ROOT_DIR}/control-plane/certs/ca.crt" && -f "${ROOT_DIR}/control-plane/certs/pep.crt" && -f "${ROOT_DIR}/control-plane/certs/pep.key" ]]; then
+  ${SCP} "${ROOT_DIR}/control-plane/certs/ca.crt" ${USER}@${GW_HOST}:/tmp/ca.crt
+  ${SCP} "${ROOT_DIR}/control-plane/certs/pep.crt" ${USER}@${GW_HOST}:/tmp/pep.crt
+  ${SCP} "${ROOT_DIR}/control-plane/certs/pep.key" ${USER}@${GW_HOST}:/tmp/pep.key
+fi
 
 log "Installation du gateway sur ztna-gw..."
 ${SSH} ${USER}@${GW_HOST} bash << 'REMOTE'
@@ -72,6 +75,14 @@ sudo chmod +x /usr/local/bin/ztna-gateway
 # Config
 sudo mkdir -p /etc/ztna
 sudo mv /tmp/gateway.yaml /etc/ztna/gateway.yaml
+if [[ -f /tmp/ca.crt && -f /tmp/pep.crt && -f /tmp/pep.key ]]; then
+  sudo mkdir -p /etc/ztna/certs
+  sudo mv /tmp/ca.crt /etc/ztna/certs/ca.crt
+  sudo mv /tmp/pep.crt /etc/ztna/certs/pep.crt
+  sudo mv /tmp/pep.key /etc/ztna/certs/pep.key
+  sudo chmod 644 /etc/ztna/certs/ca.crt /etc/ztna/certs/pep.crt
+  sudo chmod 600 /etc/ztna/certs/pep.key
+fi
 
 # Systemd service
 sudo tee /etc/systemd/system/ztna-gateway.service > /dev/null << 'SVC'
@@ -105,7 +116,7 @@ log "Récupération de la clé CA SSH depuis le CP..."
 ${SSH} ${USER}@${GW_HOST} bash << REMOTE
 set -euo pipefail
 for i in \$(seq 1 10); do
-  if curl -sk "https://${CP_HOST}:8080/pki/ssh-ca/pubkey" -o /tmp/ztna_ca.pub 2>/dev/null \
+  if curl -sk --max-time 5 "https://${CP_HOST}:8080/pki/ssh-ca/pubkey" -o /tmp/ztna_ca.pub 2>/dev/null \
       && [[ -s /tmp/ztna_ca.pub ]]; then
     echo "✓ CA SSH récupérée (tentative \$i)"
     break
@@ -147,7 +158,7 @@ log "Configuration SSH CA sur lan-app..."
 ${SSH_LAN} ${USER}@${LAN_APP_IP} bash << REMOTE
 set -euo pipefail
 for i in \$(seq 1 10); do
-  if curl -sk "https://${CP_HOST}:8080/pki/ssh-ca/pubkey" -o /tmp/ztna_ca.pub 2>/dev/null \
+  if curl -sk --max-time 5 "https://${CP_HOST}:8080/pki/ssh-ca/pubkey" -o /tmp/ztna_ca.pub 2>/dev/null \
       && [[ -s /tmp/ztna_ca.pub ]]; then
     echo "✓ CA SSH récupérée"
     break
@@ -164,6 +175,31 @@ grep -q "TrustedUserCAKeys" /etc/ssh/sshd_config || \
 
 sudo systemctl restart sshd
 echo "✓ SSH CA configurée sur lan-app"
+
+# S'assurer qu'un service HTTP répond sur :80 pour les tests Flux2.
+if ! curl -sf --max-time 3 http://127.0.0.1/ >/dev/null 2>&1; then
+  echo "⚠ Aucun HTTP local détecté sur lan-app:80, activation fallback"
+  sudo mkdir -p /var/www/html
+  echo '<html><body><h1>ZTNA Lab - lan-app</h1><p>Acces autorise via ZTNA</p></body></html>' | \
+    sudo tee /var/www/html/index.html >/dev/null
+
+  if command -v nginx >/dev/null 2>&1; then
+    sudo systemctl enable --now nginx >/dev/null 2>&1 || true
+  fi
+
+  if ! curl -sf --max-time 3 http://127.0.0.1/ >/dev/null 2>&1; then
+    sudo pkill -f "python3 -m http.server 80 --directory /var/www/html" >/dev/null 2>&1 || true
+    sudo nohup python3 -m http.server 80 --directory /var/www/html \
+      >/var/log/ztna-lan-app-http.log 2>&1 &
+    sleep 1
+  fi
+fi
+
+if curl -sf --max-time 3 http://127.0.0.1/ >/dev/null 2>&1; then
+  echo "✓ Backend HTTP lan-app:80 opérationnel"
+else
+  echo "⚠ Backend HTTP lan-app:80 toujours indisponible (tests Flux2 risquent d'échouer)"
+fi
 REMOTE
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -173,7 +209,7 @@ log "Configuration SSH CA sur lan-admin..."
 ${SSH_LAN} ${USER}@${LAN_ADMIN_IP} bash << REMOTE
 set -euo pipefail
 for i in \$(seq 1 10); do
-  if curl -sk "https://${CP_HOST}:8080/pki/ssh-ca/pubkey" -o /tmp/ztna_ca.pub 2>/dev/null \
+  if curl -sk --max-time 5 "https://${CP_HOST}:8080/pki/ssh-ca/pubkey" -o /tmp/ztna_ca.pub 2>/dev/null \
       && [[ -s /tmp/ztna_ca.pub ]]; then
     echo "✓ CA SSH récupérée"
     break

@@ -38,6 +38,8 @@ type DeviceCertRepository interface {
 // GatewayRepository persists gateway registration and liveness data.
 type GatewayRepository interface {
 	RegisterGateway(ctx context.Context, gw model.Gateway) error
-	UpdateGatewayHeartbeat(ctx context.Context, id string) error
+	UpdateGatewayHeartbeat(ctx context.Context, id, version string) error
+	GetGateway(ctx context.Context, id string) (model.Gateway, error)
+	SetGatewayActive(ctx context.Context, id string, active bool) error
 	ListGateways(ctx context.Context) ([]model.Gateway, error)
 }

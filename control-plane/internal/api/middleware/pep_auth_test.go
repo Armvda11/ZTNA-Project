@@ -97,3 +97,16 @@ func TestPEPAuth_EmptyTokenMap_Rejects(t *testing.T) {
 		t.Fatalf("expected 401, got %d", code)
 	}
 }
+
+func TestPEPAuth_RevokedPEP_Forbidden(t *testing.T) {
+	auth := NewPEPAuth(config.PEPConfig{
+		AuthMode:      "token",
+		Tokens:        map[string]string{"gw-1": "secret-token"},
+		RevokedPEPIDs: []string{"gw-1"},
+	})
+	h := auth.RequirePEP(http.HandlerFunc(nextOK))
+	code := doRequest(t, h.ServeHTTP, "gw-1", "secret-token")
+	if code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", code)
+	}
+}

@@ -94,10 +94,13 @@ func TestBuildAuthorizeRequest_SSH(t *testing.T) {
 	subj := pep.SubjectDTO{Username: "alice", Sub: "uid1", Groups: []string{"ztna-admins"}}
 	req := ConnectRequest{ResourceType: "ssh", ResourceMatch: "ssh:lan-app:22", Action: "connect"}
 
-	ar := buildAuthorizeRequest(subj, req)
+	ar := buildAuthorizeRequest(subj, req, "10.0.0.1", "gw-1", "sess-1")
 
 	if ar.Action != "connect" {
 		t.Errorf("Action: %q", ar.Action)
+	}
+	if ar.Context.SrcIP != "10.0.0.1" || ar.Context.GatewayID != "gw-1" || ar.Context.SessionHint != "sess-1" {
+		t.Errorf("Context: %+v", ar.Context)
 	}
 	if ar.Resource.SSH == nil {
 		t.Fatal("SSH resource doit être non-nil")
@@ -111,7 +114,7 @@ func TestBuildAuthorizeRequest_HTTP(t *testing.T) {
 	subj := pep.SubjectDTO{Username: "alice"}
 	req := ConnectRequest{ResourceType: "http", ResourceMatch: "http:lan-app:80", Action: "connect"}
 
-	ar := buildAuthorizeRequest(subj, req)
+	ar := buildAuthorizeRequest(subj, req, "10.0.0.1", "gw-1", "sess-1")
 
 	if ar.Resource.HTTP == nil {
 		t.Fatal("HTTP resource doit être non-nil")
