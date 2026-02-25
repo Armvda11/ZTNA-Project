@@ -36,7 +36,7 @@ type ServerTLSConfig struct {
 // ControlPlaneConfig contient les paramètres de connexion au Control Plane.
 type ControlPlaneConfig struct {
 	BaseURL  string `yaml:"base_url"`
-	CAFile   string `yaml:"ca_file"`           // CA pour vérifier le cert du CP
+	CAFile   string `yaml:"ca_file"`              // CA pour vérifier le cert du CP
 	Insecure bool   `yaml:"insecure_skip_verify"` // Lab uniquement
 }
 
@@ -102,6 +102,10 @@ func applyDefaults(cfg *Config) {
 
 // Validate vérifie que la configuration est complète et cohérente.
 func (c *Config) Validate() error {
+	// Validation server
+	if c.Server.ListenAddr == "" {
+		return fmt.Errorf("server.listen_addr est requis")
+	}
 	if c.Server.TLS.CertFile == "" {
 		return fmt.Errorf("server.tls.cert_file est requis")
 	}
@@ -111,22 +115,41 @@ func (c *Config) Validate() error {
 	if c.Server.TLS.ClientCAFile == "" {
 		return fmt.Errorf("server.tls.client_ca_file est requis (mTLS obligatoire)")
 	}
+
+	// Validation Control Plane
 	if c.ControlPlane.BaseURL == "" {
 		return fmt.Errorf("control_plane.base_url est requis")
 	}
+
+	// Validation PEP
 	if c.PEP.ID == "" {
 		return fmt.Errorf("pep.id est requis")
 	}
 	if c.PEP.Token == "" {
 		return fmt.Errorf("pep.token est requis")
 	}
+	if len(c.PEP.Token) < 16 {
+		return fmt.Errorf("pep.token doit faire au moins 16 caractères")
+	}
+
+	// Validation proxy
+	if _, err := time.ParseDuration(c.Proxy.DialTimeout); err != nil {
+		return fmt.Errorf("proxy.dial_timeout invalide: %w", err)
+	}
+	if c.Proxy.MaxConns < 1 {
+		return fmt.Errorf("proxy.max_conns doit être > 0")
+	}
+
 	return nil
 }
 
 // DialTimeoutDuration retourne le dial_timeout parsé en time.Duration.
+// Cette méthode ne retourne pas d'erreur car la validation a déjà été
+// effectuée dans Validate().
 func (c *Config) DialTimeoutDuration() time.Duration {
 	d, err := time.ParseDuration(c.Proxy.DialTimeout)
 	if err != nil {
+		// Ne devrait jamais arriver si Validate() a été appelé
 		return 10 * time.Second
 	}
 	return d

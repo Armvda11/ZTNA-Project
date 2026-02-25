@@ -81,3 +81,16 @@ func SubjectFromContext(ctx context.Context) string {
 	}
 	return ""
 }
+
+// WithPepID ajoute l'identifiant PEP au contexte.
+func WithPepID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, keyPepID, id)
+}
+
+// PepIDFromContext extrait l'identifiant PEP du contexte.
+func PepIDFromContext(ctx context.Context) string {
+	if id, ok := ctx.Value(keyPepID).(string); ok {
+		return id
+	}
+	return ""
+}

@@ -115,6 +115,14 @@ func (c *Config) Validate() error {
 	if c.Gateway.Address == "" {
 		return fmt.Errorf("gateway.address est requis")
 	}
+
+	// Valider que l'issuer est HTTPS sauf si insecure_allow_http_oidc est activé
+	if !c.Security.InsecureAllowHTTPOIDC {
+		if len(c.OIDC.Issuer) >= 7 && c.OIDC.Issuer[:7] == "http://" {
+			return fmt.Errorf("oidc.issuer doit être HTTPS en production (utilisez security.insecure_allow_http_oidc: true en lab)")
+		}
+	}
+
 	return nil
 }
 

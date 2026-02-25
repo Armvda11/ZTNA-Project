@@ -25,3 +25,25 @@ type ResourceRef struct {
 	Port int    `json:"port"`
 	Name string `json:"name,omitempty"`
 }
+
+// Validate vérifie qu'une ResourceRef est valide.
+func (r *ResourceRef) Validate() error {
+	if r.Host == "" {
+		return ErrInvalidRequest
+	}
+	if r.Port < 1 || r.Port > 65535 {
+		return ErrInvalidRequest
+	}
+	if r.Type == "" {
+		return ErrInvalidRequest
+	}
+	return nil
+}
+
+// Validate vérifie qu'un SubjectRef est valide.
+func (s *SubjectRef) Validate() error {
+	if s.Sub == "" {
+		return ErrNoIdentity
+	}
+	return nil
+}

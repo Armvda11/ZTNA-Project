@@ -37,8 +37,8 @@ type SubjectRef struct {
 
 // ConnectRequest représente une demande de connexion à une ressource.
 type ConnectRequest struct {
-	Action   string      `json:"action"`
-	Resource ResourceRef `json:"resource"`
+	Action   string         `json:"action"`
+	Resource ResourceRef    `json:"resource"`
 	Context  RequestContext `json:"context"`
 }
 
@@ -55,4 +55,26 @@ type RequestContext struct {
 	SourceIP   string            `json:"src_ip,omitempty"`
 	DeviceInfo map[string]string `json:"device_info,omitempty"`
 	Timestamp  string            `json:"timestamp,omitempty"`
+}
+
+// Validate vérifie qu'une ResourceRef est valide.
+func (r *ResourceRef) Validate() error {
+	if r.Host == "" {
+		return ErrInvalidConfig
+	}
+	if r.Port < 1 || r.Port > 65535 {
+		return ErrInvalidConfig
+	}
+	if r.Type == "" {
+		return ErrInvalidConfig
+	}
+	return nil
+}
+
+// Validate vérifie qu'un SubjectRef est valide.
+func (s *SubjectRef) Validate() error {
+	if s.Sub == "" {
+		return ErrInvalidConfig
+	}
+	return nil
 }

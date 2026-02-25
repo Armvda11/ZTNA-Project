@@ -100,3 +100,79 @@ func TestConnectRequest_JSON(t *testing.T) {
 		t.Errorf("Resource.Host = %q, want %q", decoded.Resource.Host, req.Resource.Host)
 	}
 }
+
+func TestResourceRef_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		res     ResourceRef
+		wantErr bool
+	}{
+		{
+			name:    "valid resource",
+			res:     ResourceRef{Type: "ssh", Host: "10.10.20.40", Port: 22},
+			wantErr: false,
+		},
+		{
+			name:    "missing host",
+			res:     ResourceRef{Type: "ssh", Port: 22},
+			wantErr: true,
+		},
+		{
+			name:    "invalid port (0)",
+			res:     ResourceRef{Type: "ssh", Host: "10.10.20.40", Port: 0},
+			wantErr: true,
+		},
+		{
+			name:    "invalid port (too high)",
+			res:     ResourceRef{Type: "ssh", Host: "10.10.20.40", Port: 70000},
+			wantErr: true,
+		},
+		{
+			name:    "missing type",
+			res:     ResourceRef{Host: "10.10.20.40", Port: 22},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.res.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSubjectRef_Validate(t *testing.T) {
+	tests := []struct {
+		name    string
+		subject SubjectRef
+		wantErr bool
+	}{
+		{
+			name:    "valid subject",
+			subject: SubjectRef{Sub: "user-123", Username: "alice"},
+			wantErr: false,
+		},
+		{
+			name:    "missing sub",
+			subject: SubjectRef{Username: "alice"},
+			wantErr: true,
+		},
+		{
+			name:    "valid with groups",
+			subject: SubjectRef{Sub: "user-123", Username: "alice", Groups: []string{"admin", "users"}},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.subject.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
