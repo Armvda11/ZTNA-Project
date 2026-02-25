@@ -1,5 +1,6 @@
 package main
-
+// point d'entrée de binaire de mon control plane , il orchestre le démarage et l'arrêt des service 
+// qui sont délégéer aux internals
 import (
 	"context"
 	"flag"
@@ -15,6 +16,7 @@ import (
 )
 
 func main() {
+	// chargement de la 
 	cfgPath := flag.String("config", "config.yaml", "path to config file")
 	flag.Parse()
 
@@ -29,12 +31,14 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// donner la main au APP pour construire notre CP
 	application, err := app.New(ctx, cfg, log)
 	if err != nil {
 		log.Error("app init failed", slog.Any("err", err))
 		os.Exit(1)
 	}
 
+	// demarrage du serveur et gestion des erreurs avec goroutine
 	go func() {
 		if err := application.Run(ctx); err != nil {
 			log.Error("server stopped", slog.Any("err", err))

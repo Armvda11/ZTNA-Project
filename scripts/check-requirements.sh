@@ -1,61 +1,93 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== ZTNA Lab: verification des prerequis ==="
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
 
-check_cmd() {
-  local name="$1"
+ok()   { echo -e "${GREEN}[OK]${NC} $*"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+err()  { echo -e "${RED}[KO]${NC} $*"; }
+info() { echo -e "${BLUE}[INFO]${NC} $*"; }
+
+FAILS=0
+
+require_cmd() {
+  local label="$1"
   local cmd="$2"
-  if command -v "$cmd" >/dev/null 2>&1; then
-    echo "OK  - $name"
+  if command -v "${cmd}" >/dev/null 2>&1; then
+    ok "${label} (${cmd})"
   else
-    echo "KO  - $name (commande '$cmd' introuvable)"
-    return 1
+    err "${label} requis mais introuvable: ${cmd}"
+    FAILS=$((FAILS + 1))
   fi
 }
 
-# CPU virtualization
+optional_cmd() {
+  local label="$1"
+  local cmd="$2"
+  if command -v "${cmd}" >/dev/null 2>&1; then
+    ok "${label} (${cmd})"
+  else
+    warn "${label} optionnel absent: ${cmd}"
+  fi
+}
+
+info "ZTNA Lab — vérification des prérequis (quickstart)"
+
 if grep -E 'vmx|svm' /proc/cpuinfo >/dev/null 2>&1; then
-  echo "OK  - Virtualisation CPU"
+  ok "Virtualisation CPU détectée (VT-x/AMD-V)"
 else
-  echo "KO  - Virtualisation CPU (active VT-x/AMD-V dans le BIOS)"
-  exit 1
+  err "Virtualisation CPU absente (activer VT-x/AMD-V dans le BIOS)"
+  FAILS=$((FAILS + 1))
 fi
 
-# RAM
-ram_gb=$(free -g | awk 'NR==2 {print $2}')
-if [ "${ram_gb:-0}" -ge 16 ]; then
-  echo "OK  - RAM ${ram_gb} GB"
+RAM_GB=$(free -g | awk 'NR==2 {print $2}')
+if [ "${RAM_GB:-0}" -ge 16 ]; then
+  ok "RAM ${RAM_GB} GB"
 else
-  echo "WARN- RAM ${ram_gb:-0} GB (recommande 16 GB)"
+  warn "RAM ${RAM_GB:-0} GB (16 GB recommandés)"
 fi
 
-# Disk
-free_gb=$(df / | awk 'NR==2 {printf "%d", $4/1024/1024}')
-if [ "${free_gb:-0}" -ge 100 ]; then
-  echo "OK  - Disque ${free_gb} GB libres"
+FREE_GB=$(df / | awk 'NR==2 {printf "%d", $4/1024/1024}')
+if [ "${FREE_GB:-0}" -ge 100 ]; then
+  ok "Espace disque ${FREE_GB} GB"
 else
-  echo "KO  - Disque ${free_gb:-0} GB libres (min 100 GB)"
-  exit 1
+  err "Espace disque insuffisant: ${FREE_GB:-0} GB (100 GB minimum)"
+  FAILS=$((FAILS + 1))
 fi
 
-check_cmd "Terraform" terraform
-check_cmd "libvirt/virsh" virsh
+require_cmd "Terraform" terraform
+require_cmd "Libvirt CLI" virsh
+require_cmd "SSH client" ssh
+require_cmd "SCP" scp
+require_cmd "Curl" curl
+require_cmd "Go (build local CP/GW)" go
 
-# Groups
+optional_cmd "OpenSSL (tests manuels)" openssl
+optional_cmd "Python3 (scripts tests)" python3
+optional_cmd "jq (debug JSON)" jq
+
 if id -Gn | grep -q '\blibvirt\b'; then
-  echo "OK  - Groupe libvirt"
+  ok "Utilisateur dans le groupe libvirt"
 else
-  echo "KO  - Groupe libvirt (ajouter l'utilisateur au groupe)"
+  err "Utilisateur hors groupe libvirt (sudo usermod -aG libvirt,kvm \$USER puis newgrp libvirt)"
+  FAILS=$((FAILS + 1))
+fi
+
+if systemctl is-active --quiet libvirtd 2>/dev/null; then
+  ok "Service libvirtd actif"
+else
+  warn "libvirtd inactif (essayez: sudo systemctl start libvirtd)"
+fi
+
+if [ "${FAILS}" -gt 0 ]; then
+  echo
+  err "Pré-requis non satisfaits (${FAILS} erreur(s))."
   exit 1
 fi
 
-# libvirtd service
-if systemctl is-active --quiet libvirtd; then
-  echo "OK  - libvirtd actif"
-else
-  echo "KO  - libvirtd inactif (sudo systemctl start libvirtd)"
-  exit 1
-fi
-
-echo "=== Prerequis OK ==="
+echo
+ok "Pré-requis minimum satisfaits."

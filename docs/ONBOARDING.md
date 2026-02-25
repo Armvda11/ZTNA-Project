@@ -1,44 +1,38 @@
-# Onboarding - ZTNA Lab
+# Onboarding ZTNA Lab
 
-Objectif: avoir un lab fonctionnel en moins de 15-20 minutes.
+Objectif: avoir un lab fonctionnel avec le chemin le plus simple possible.
 
 ## TL;DR
 
 ```bash
-git clone https://github.com/your-org/ZTNA.git
-cd ZTNA
-./setup.sh
-newgrp libvirt
-make init
-make check
+./setup.sh              # optionnel si la machine n'est pas preparee
+newgrp libvirt          # recharger groupe libvirt
+make quickstart         # prereq -> up -> deploy -> deploy-gw -> check
 ```
-
-## Liens utiles
-
-- Guide rapide: [../QUICKSTART.md](../QUICKSTART.md)
-- Vue d'ensemble: [../README.md](../README.md)
-- Architecture: [../ARCHITECTURE.md](../ARCHITECTURE.md)
-- Depannage: [../TROUBLESHOOTING.md](../TROUBLESHOOTING.md)
-- Contribution: [../CONTRIBUTING.md](../CONTRIBUTING.md)
 
 ## Commandes essentielles
 
 ```bash
-make init
+make help
 make check
 make ssh-client
 make ssh-gw
 make ssh-cp
+make destroy
 ```
 
-## En cas de probleme
+## Ce que fait quickstart
 
-- Depannage: [../TROUBLESHOOTING.md](../TROUBLESHOOTING.md)
+1. Verifie les prerequis minimum (`make prereq`)
+2. Cree/met a jour les VMs (`make up`)
+3. Deploie control-plane + keycloak (`make deploy`)
+4. Deploie gateway (`make deploy-gw`)
+5. Verifie sante et SSH (`make check`)
+
+## Liens utiles
+
+- Guide rapide: [../QUICKSTART.md](../QUICKSTART.md)
+- Prerequis: [REQUIREMENTS.md](REQUIREMENTS.md)
 - Installation manuelle: [SETUP.md](SETUP.md)
-
-## Vous etes pret
-
-- Control Plane: [../control-plane](../control-plane)
-- Gateway: [../gateway](../gateway)
-- Infrastructure: [../lab/terraform](../lab/terraform)
-- Contribution: [../CONTRIBUTING.md](../CONTRIBUTING.md)
+- Tests: [TESTING.md](TESTING.md)
+- Runbook CP/GW: [CP_GW_RUNBOOK.md](CP_GW_RUNBOOK.md)

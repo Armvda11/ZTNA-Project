@@ -144,12 +144,23 @@ echo ""
 # Test 7: PEP authorize + audit
 echo "[7/7] CONTROL-PLANE - PEP AUTHORIZE + AUDIT"
 echo "======================================"
+REGISTER=$(curl ${CURL_OPTS} -X POST https://10.10.20.30:8080/api/v1/pep/register \
+  -H "X-PEP-ID: ztna-gw-01" -H "X-PEP-TOKEN: ztna-lab-pep-secret-2026" \
+  -H "Content-Type: application/json" \
+  -d '{"gateway_id":"ztna-gw-01","name":"ztna-gw-01","version":"ztna-lab-test"}' 2>&1)
+
+if ! echo "$REGISTER" | grep -q '"status":"registered"'; then
+  echo "❌ FAIL: PEP register failed"
+  echo "   Response: ${REGISTER:0:300}"
+  exit 1
+fi
+
 DECISION=$(curl ${CURL_OPTS} -X POST https://10.10.20.30:8080/api/v1/pep/authorize \
-  -H "X-PEP-ID: ztna-gw-1" -H "X-PEP-TOKEN: CHANGE_ME_LONG_RANDOM" \
+  -H "X-PEP-ID: ztna-gw-01" -H "X-PEP-TOKEN: ztna-lab-pep-secret-2026" \
   -H "Content-Type: application/json" \
   -d '{"subject":{"username":"alice","groups":["ztna-admins"]},"action":"connect","resource":{"type":"ssh","host":"lan-app","port":22},"context":{"src_ip":"1.2.3.4"}}' 2>&1)
 
-if echo "$DECISION" | grep -q '"decision":"allow"'; then
+if echo "$DECISION" | grep -q '"effect":"allow"'; then
   echo "✅ PASS: PEP authorize allow"
   echo "   Response: ${DECISION}"
 else

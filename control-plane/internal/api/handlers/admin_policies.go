@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -54,7 +55,7 @@ func (h *AdminPoliciesHandler) CreateVersion(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	_ = h.audit.Append(r.Context(), model.AuditEvent{
+	if appendErr := h.audit.Append(r.Context(), model.AuditEvent{
 		Subject:  subject.Username,
 		Action:   "policy_create",
 		Resource: "policy",
@@ -62,7 +63,9 @@ func (h *AdminPoliciesHandler) CreateVersion(w http.ResponseWriter, r *http.Requ
 		Reason:   "created",
 		PepID:    "",
 		SourceIP: r.RemoteAddr,
-	})
+	}); appendErr != nil {
+		slog.Error("audit append failed", "action", "policy_create", "err", appendErr)
+	}
 
 	writeJSON(w, http.StatusCreated, createPolicyResponse{VersionID: id})
 }
@@ -86,7 +89,7 @@ func (h *AdminPoliciesHandler) ActivateVersion(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	_ = h.audit.Append(r.Context(), model.AuditEvent{
+	if appendErr := h.audit.Append(r.Context(), model.AuditEvent{
 		Subject:  subject.Username,
 		Action:   "policy_activate",
 		Resource: "policy",
@@ -94,7 +97,9 @@ func (h *AdminPoliciesHandler) ActivateVersion(w http.ResponseWriter, r *http.Re
 		Reason:   "activated",
 		PepID:    "",
 		SourceIP: r.RemoteAddr,
-	})
+	}); appendErr != nil {
+		slog.Error("audit append failed", "action", "policy_activate", "err", appendErr)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
