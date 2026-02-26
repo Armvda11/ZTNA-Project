@@ -111,7 +111,18 @@ log "✓ Fichiers copiés"
 
 # 6. Lancer Keycloak
 log "Démarrage de Keycloak..."
-ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "cd ztna/control-plane/keycloak && docker compose up -d --force-recreate"
+# Supprimer les vieux conteneurs V1 (nom avec hash ex: abc123_keycloak_keycloak_1)
+# puis faire un compose down propre avant de relancer — évite KeyError: 'ContainerConfig'
+ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "
+  # Supprimer tout conteneur dont le nom ressemble à celui de keycloak (V1 ou V2)
+  OLD=\$(docker ps -a --format '{{.Names}}' | grep -iE 'keycloak' || true)
+  if [[ -n \"\$OLD\" ]]; then
+    echo \"[cleanup] Suppression des conteneurs existants: \$OLD\"
+    echo \"\$OLD\" | xargs docker rm -f 2>/dev/null || true
+  fi
+  # Relance propre via Compose V2
+  cd ztna/control-plane/keycloak && docker compose up -d
+"
 sleep 5
 log "✓ Keycloak démarré"
 
