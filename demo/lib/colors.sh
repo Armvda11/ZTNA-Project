@@ -22,6 +22,10 @@ COLOR_WAIT="${YELLOW}"
 COLOR_INFO="${CYAN}"
 COLOR_STEP="${MAGENTA}"
 COLOR_OK="${GREEN}"
+# Alias courts
+INFO="${CYAN}"
+WARN="${YELLOW}"
+ERR="${RED}"
 
 # ─── Fonctions d'affichage ───────────────────────────────────────────────────
 

@@ -170,8 +170,8 @@ for step_num in $(seq "$FROM_STEP" "$TO_STEP"); do
 
     # Exécuter l'étape
     EXIT_CODE=0
-    if ! bash "$STEP_FILE"; then
-        EXIT_CODE=$?
+    bash "$STEP_FILE" || EXIT_CODE=$?
+    if [[ $EXIT_CODE -ne 0 ]]; then
         print_err "Étape ${step_num} terminée avec une erreur (code ${EXIT_CODE})"
         if [[ "$MODE" != "auto" ]]; then
             echo -e "${YELLOW}Continuer quand même ? [Entrée=oui / 'quit'=arrêter]${NC}"

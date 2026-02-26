@@ -26,7 +26,6 @@ echo -e "${YELLOW}${BOLD}Tentative de connexion avec le certificat révoqué…$
 print_separator
 
 ssh_client bash <<ENDSSH
-set -e
 WORK_DIR="/tmp/ztna-demo"
 KEY_FILE="\$WORK_DIR/device.key"
 CERT_FILE="\$WORK_DIR/device.crt"
@@ -34,7 +33,7 @@ GW_ADDR="${GW_IP}:9443"
 
 if [[ ! -f "\$CERT_FILE" ]]; then
     echo -e "\033[0;31m[✗]\033[0m Certificat introuvable — exécutez d'abord les étapes 03 et 06"
-    exit 1
+    exit 0
 fi
 
 echo -e "\033[1;33m[wan-client]\033[0m Tentative de connexion mTLS avec cert révoqué…"
