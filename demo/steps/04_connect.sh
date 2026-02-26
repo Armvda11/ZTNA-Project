@@ -31,7 +31,7 @@ set -e
 WORK_DIR="/tmp/ztna-demo"
 KEY_FILE="\$WORK_DIR/device.key"
 CERT_FILE="\$WORK_DIR/device.crt"
-GW_ADDR="${GW_IP}:9443"
+GW_ADDR="${GW_IP}:4433"  # port réel de la gateway (config /etc/ztna/gateway.yaml)
 
 if [[ ! -f "\$CERT_FILE" ]]; then
     echo -e "\033[0;31m[✗]\033[0m Certificat manquant — exécutez d'abord l'étape 03"
@@ -45,7 +45,7 @@ python3 - <<'PYEOF'
 import ssl, socket, struct, json, sys
 
 GW_HOST = "${GW_IP}"
-GW_PORT = 9443
+GW_PORT = 4433  # port réel (config gateway.yaml : listen_addr 0.0.0.0:4433)
 CERT_FILE = "/tmp/ztna-demo/device.crt"
 KEY_FILE  = "/tmp/ztna-demo/device.key"
 

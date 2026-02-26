@@ -14,7 +14,7 @@ func TestHandleConnectRequest(t *testing.T) {
 	t.Skip("TODO: CONNECT handler not yet implemented - will pass when complete")
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	_ = NewHandler(nil, nil, nil, log)
+	_ = NewHandler(nil, nil, nil, nil, log)
 
 	// Create a fake connection
 	server, client := net.Pipe()
@@ -51,7 +51,7 @@ func TestHandleConnectAllow(t *testing.T) {
 
 	// Mock authorize client that returns "allow"
 	// Mock proxy that succeeds
-	_ = NewHandler(nil, nil, nil, log)
+	_ = NewHandler(nil, nil, nil, nil, log)
 
 	server, client := net.Pipe()
 	defer server.Close()
@@ -90,7 +90,7 @@ func TestHandleConnectDeny(t *testing.T) {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	// Mock authorize client that returns "deny"
-	_ = NewHandler(nil, nil, nil, log)
+	_ = NewHandler(nil, nil, nil, nil, log)
 
 	server, client := net.Pipe()
 	defer server.Close()
@@ -130,7 +130,7 @@ func TestHandleMalformedRequest(t *testing.T) {
 	t.Skip("TODO: Error handling not yet implemented - will pass when complete")
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	_ = NewHandler(nil, nil, nil, log)
+	_ = NewHandler(nil, nil, nil, nil, log)
 
 	server, client := net.Pipe()
 	defer server.Close()
@@ -158,7 +158,7 @@ func TestProtocolVersion(t *testing.T) {
 	t.Skip("TODO: Protocol version negotiation not yet implemented - will pass when complete")
 
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	_ = NewHandler(nil, nil, nil, log)
+	_ = NewHandler(nil, nil, nil, nil, log)
 
 	server, client := net.Pipe()
 	defer server.Close()

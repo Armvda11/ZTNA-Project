@@ -36,7 +36,7 @@ step() { echo; echo "──── $* ────"; }
 step "1. Vérification des prérequis"
 # ──────────────────────────────────────────────────────────────────────────────
 log "Compilation du gateway local..."
-(cd "${GW_DIR}" && GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ztna-gateway-linux-amd64 .)
+(cd "${GW_DIR}/cmd/ztna-gateway" && GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o "${GW_DIR}/ztna-gateway-linux-amd64" .)
 log "✓ Binaire compilé"
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -57,7 +57,21 @@ step "3. Configuration de ztna-gw"
 # ──────────────────────────────────────────────────────────────────────────────
 log "Copie du binaire gateway..."
 ${SCP} "${GW_BIN}" ${USER}@${GW_HOST}:/tmp/ztna-gateway
-${SCP} "${GW_DIR}/config.yaml" ${USER}@${GW_HOST}:/tmp/gateway.yaml
+# Sélection du fichier de config (config.yaml > config.lab.yaml)
+GW_CONFIG_FILE=""
+if [[ -f "${GW_DIR}/config.yaml" ]]; then
+  GW_CONFIG_FILE="${GW_DIR}/config.yaml"
+elif [[ -f "${GW_DIR}/config.lab.yaml" ]]; then
+  GW_CONFIG_FILE="${GW_DIR}/config.lab.yaml"
+  log "⚠ config.yaml absent — utilisation de config.lab.yaml"
+fi
+if [[ -n "${GW_CONFIG_FILE}" ]]; then
+  ${SCP} "${GW_CONFIG_FILE}" ${USER}@${GW_HOST}:/tmp/gateway.yaml
+else
+  log "⚠ Aucun fichier config gateway trouvé — la config existante (/etc/ztna/gateway.yaml) sera conservée"
+  # Créer un fichier vide pour que le remote script ne plante pas sur le mv
+  touch /tmp/gateway_empty_placeholder
+fi
 if [[ -f "${ROOT_DIR}/control-plane/certs/ca.crt" && -f "${ROOT_DIR}/control-plane/certs/pep.crt" && -f "${ROOT_DIR}/control-plane/certs/pep.key" ]]; then
   ${SCP} "${ROOT_DIR}/control-plane/certs/ca.crt" ${USER}@${GW_HOST}:/tmp/ca.crt
   ${SCP} "${ROOT_DIR}/control-plane/certs/pep.crt" ${USER}@${GW_HOST}:/tmp/pep.crt
@@ -72,9 +86,14 @@ set -euo pipefail
 sudo mv /tmp/ztna-gateway /usr/local/bin/ztna-gateway
 sudo chmod +x /usr/local/bin/ztna-gateway
 
-# Config
+# Config (seulement si un nouveau fichier a été envoyé)
 sudo mkdir -p /etc/ztna
-sudo mv /tmp/gateway.yaml /etc/ztna/gateway.yaml
+if [[ -f /tmp/gateway.yaml ]]; then
+  sudo mv /tmp/gateway.yaml /etc/ztna/gateway.yaml
+  echo "✓ Config gateway mise à jour"
+else
+  echo "✓ Config existante /etc/ztna/gateway.yaml conservée"
+fi
 if [[ -f /tmp/ca.crt && -f /tmp/pep.crt && -f /tmp/pep.key ]]; then
   sudo mkdir -p /etc/ztna/certs
   sudo mv /tmp/ca.crt /etc/ztna/certs/ca.crt

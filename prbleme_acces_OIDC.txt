@@ -1,0 +1,454 @@
+========= make boostrap =====
+[H[2J[3J[0;34m[1m
+╔══════════════════════════════════════════════════════════════╗
+║    ZTNA Lab — Bootstrap (Installation automatique)          ║
+║    Zero Trust Network Access — Plug & Play                  ║
+╚══════════════════════════════════════════════════════════════╝
+[0m
+  [0;34mLogs complets :[0m /tmp/ztna-bootstrap-20260226-125240.log
+  [0;34mDurée estimée :[0m 5-15 minutes (téléchargement image Ubuntu)
+
+
+[0;34m[1m━━━ 0. Vérifications préalables ━━━[0m
+  [0;32m[✔][0m Utilisateur non-root : hermas
+  [0;32m[✔][0m Droits sudo disponibles
+  [0;32m[✔][0m OS : Ubuntu 25.10
+  [0;32m[✔][0m Virtualisation CPU : OK
+  [0;32m[✔][0m RAM : 30 GB
+  [0;32m[✔][0m Espace libre : 622 GB
+
+[0;34m[1m━━━ 1. Installation des paquets système ━━━[0m
+  [0;34m[→][0m Mise à jour des dépôts APT...
+  [0;32m[✔][0m Déjà installé : qemu-system-x86
+  [0;32m[✔][0m Déjà installé : qemu-utils
+  [0;32m[✔][0m Déjà installé : libvirt-daemon-system
+  [0;32m[✔][0m Déjà installé : libvirt-clients
+  [0;32m[✔][0m Déjà installé : libvirt-daemon
+  [0;32m[✔][0m Déjà installé : virtinst
+  [0;32m[✔][0m Déjà installé : cpu-checker
+  [0;32m[✔][0m Déjà installé : cloud-image-utils
+  [0;32m[✔][0m Déjà installé : apparmor
+  [0;32m[✔][0m Déjà installé : apparmor-utils
+  [0;32m[✔][0m Déjà installé : openssh-client
+  [0;32m[✔][0m Déjà installé : openssh-server
+  [0;32m[✔][0m Déjà installé : curl
+  [0;32m[✔][0m Déjà installé : wget
+  [0;32m[✔][0m Déjà installé : git
+  [0;32m[✔][0m Déjà installé : make
+  [0;32m[✔][0m Déjà installé : build-essential
+  [0;32m[✔][0m Déjà installé : jq
+  [0;32m[✔][0m Déjà installé : unzip
+  [0;32m[✔][0m Tous les paquets déjà présents
+
+[0;34m[1m━━━ 2. Configuration KVM ━━━[0m
+  [0;32m[✔][0m /dev/kvm présent — KVM déjà opérationnel
+
+[0;34m[1m━━━ 3. Service libvirtd ━━━[0m
+  [0;32m[✔][0m libvirtd actif
+  [0;32m[✔][0m Socket libvirt : /var/run/libvirt/libvirt-sock
+
+[0;34m[1m━━━ 4. Groupes utilisateur (hermas) ━━━[0m
+  [0;32m[✔][0m Déjà dans le groupe libvirt
+  [0;32m[✔][0m Déjà dans le groupe kvm
+
+[0;34m[1m━━━ 5. AppArmor ━━━[0m
+  [0;32m[✔][0m Règle AppArmor ztna-lab déjà présente
+  [0;32m[✔][0m Répertoire pool présent : /var/lib/libvirt/images/ztna-lab
+
+[0;34m[1m━━━ 6. Terraform ━━━[0m
+  [0;32m[✔][0m Terraform déjà installé : Terraform v1.9.8
+
+[0;34m[1m━━━ 7. Clé SSH ━━━[0m
+  [0;32m[✔][0m Clé SSH présente : /home/hermas/.ssh/id_ed25519
+  [0;32m[✔][0m Clé SSH synchronisée dans terraform.tfvars
+
+[0;34m[1m━━━ 8. Initialisation Terraform (providers) ━━━[0m
+  [0;32m[✔][0m Providers Terraform déjà téléchargés
+
+[0;34m[1m━━━ 9. Création des VMs (Terraform) ━━━[0m
+  [0;34m[→][0m Lancement de make up...
+  [0;34m[→][0m (Téléchargement image Ubuntu cloud la première fois : 5-10 min)
+
+make[1] : on entre dans le répertoire « /home/hermas/Documents/ZTNA-Project »
+[0;34m[INFO][0m ZTNA Lab UP (infra)
+[0;34m[INFO][0m Terraform init
+[0m[1mInitializing the backend...[0m
+[0m[1mInitializing provider plugins...[0m
+- Finding dmacvicar/libvirt versions matching "0.7.1"...
+- Using previously-installed dmacvicar/libvirt v0.7.1
+
+[0m[1m[32mTerraform has been successfully initialized![0m[32m[0m
+[0m[32m
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.[0m
+[0;34m[INFO][0m Réconciliation Terraform state <-> libvirt (pool)
+[0;32m[✓][0m Pool 'ztna-lab' déjà suivi par Terraform
+[0;34m[INFO][0m Réconciliation Terraform state <-> libvirt (réseaux)
+[0;32m[✓][0m Réseau 'wan-net' déjà suivi par Terraform
+[0;32m[✓][0m Réseau 'dmz-net' déjà suivi par Terraform
+[0;32m[✓][0m Réseau 'lan-net' déjà suivi par Terraform
+[0;34m[INFO][0m Réconciliation Terraform state <-> libvirt (domains)
+[0;32m[✓][0m wan-client déjà suivi par Terraform
+[0;32m[✓][0m ztna-gw déjà suivi par Terraform
+[0;32m[✓][0m ztna-cp déjà suivi par Terraform
+[0;32m[✓][0m lan-app déjà suivi par Terraform
+[0;32m[✓][0m lan-admin déjà suivi par Terraform
+[0;34m[INFO][0m Nettoyage des volumes cloud-init orphelins
+[0;34m[INFO][0m Terraform apply
+[0m[1mlibvirt_pool.ztna: Refreshing state... [id=6da8e011-8d51-416e-b1ce-7d4cc1230d33][0m
+[0m[1mlibvirt_network.dmz: Refreshing state... [id=c8816d99-7362-4326-acc6-3040ba1fbad8][0m
+[0m[1mlibvirt_network.lan: Refreshing state... [id=9cd8a4b9-2c4c-42be-8c14-bcd1a0a0e477][0m
+[0m[1mlibvirt_network.wan: Refreshing state... [id=e08b90c5-778a-4901-a9bb-81858e8799cd][0m
+[0m[1mlibvirt_volume.base_image: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/ubuntu-22.04.qcow2][0m
+[0m[1mlibvirt_cloudinit_disk.lan_admin_ci: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/lan-admin-ci.iso;9d3ab61a-7044-41f3-b0e9-99dfe468dd6a][0m
+[0m[1mlibvirt_cloudinit_disk.lan_app_ci: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/lan-app-ci.iso;06c29dd6-cc56-4efd-bdfd-1c7ab72d2319][0m
+[0m[1mlibvirt_cloudinit_disk.ztna_cp_ci: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/ztna-cp-ci.iso;96e668d4-82c0-4f4b-9e34-142555d8c2fe][0m
+[0m[1mlibvirt_cloudinit_disk.ztna_gw_ci: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/ztna-gw-ci.iso;1bb5cd4c-f96c-47ed-a428-1918d9597055][0m
+[0m[1mlibvirt_cloudinit_disk.wan_client_ci: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/wan-client-ci.iso;d649c817-9498-4404-9898-4ba844035c09][0m
+[0m[1mlibvirt_volume.ztna_gw_disk: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/ztna-gw.qcow2][0m
+[0m[1mlibvirt_volume.lan_admin_disk: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/lan-admin.qcow2][0m
+[0m[1mlibvirt_volume.wan_client_disk: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/wan-client.qcow2][0m
+[0m[1mlibvirt_volume.lan_app_disk: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/lan-app.qcow2][0m
+[0m[1mlibvirt_volume.ztna_cp_disk: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/ztna-cp.qcow2][0m
+[0m[1mlibvirt_domain.ztna_gw: Refreshing state... [id=2c0dddf2-f527-4aab-8fb2-0741cf093799][0m
+[0m[1mlibvirt_domain.lan_app: Refreshing state... [id=5183d96c-e963-4bc2-b94a-5e8edaa6c9e7][0m
+[0m[1mlibvirt_domain.ztna_cp: Refreshing state... [id=44852a96-93c2-4777-83ed-d4c008bd341f][0m
+[0m[1mlibvirt_domain.wan_client: Refreshing state... [id=30b4b65f-72af-450b-97f8-0278d9dab66d][0m
+[0m[1mlibvirt_domain.lan_admin: Refreshing state... [id=ab4a6f96-eb1a-4712-becb-59df4078b759][0m
+
+[0m[1m[32mNo changes.[0m[1m Your infrastructure matches the configuration.[0m
+
+[0mTerraform has compared your real infrastructure against your configuration
+and found no differences, so no changes are needed.
+[0m[1m[32m
+Apply complete! Resources: 0 added, 0 changed, 0 destroyed.
+[0m[0m[1m[32m
+Outputs:
+
+[0mip_plan = {
+  "lan_admin" = "10.10.30.11"
+  "lan_app" = "10.10.30.10"
+  "wan_client" = "10.10.10.10"
+  "ztna_cp" = "10.10.20.30"
+  "ztna_gw_dmz" = "10.10.20.20"
+  "ztna_gw_lan" = "10.10.30.20"
+  "ztna_gw_wan" = "10.10.10.20"
+}
+networks = {
+  "dmz" = "dmz-net"
+  "lan" = "lan-net"
+  "wan" = "wan-net"
+}
+[0;32m[✓][0m Infrastructure prête
+[0;34m[INFO][0m Étapes suivantes:
+[0;34m[INFO][0m   make deploy
+[0;34m[INFO][0m   make deploy-gw
+[0;34m[INFO][0m   make check
+make[1] : on quitte le répertoire « /home/hermas/Documents/ZTNA-Project »
+  [0;32m[✔][0m Infrastructure VMs créée
+
+[0;34m[1m━━━ 10. Vérification finale ━━━[0m
+  [0;34m[→][0m Lancement de make doctor...
+[1m[0;34m━━━━━━━━━━━━━━━━━ RÉSUMÉ ━━━━━━━━━━━━━━━━━[0m
+  [0;31mERREURS:[0m 0
+  [0;32m[✔][0m Diagnostic terminé
+  [0;34m[→][0m Liste des VMs
+ ID   Nom          État
+-----------------------------------------
+ 1    wan-client   en cours d’exécution
+ 2    ztna-cp      en cours d’exécution
+ 3    lan-admin    en cours d’exécution
+ 4    lan-app      en cours d’exécution
+ 5    ztna-gw      en cours d’exécution
+
+
+[0;32m[1m
+╔══════════════════════════════════════════════════════════════╗
+║    Bootstrap terminé !                                      ║
+╚══════════════════════════════════════════════════════════════╝
+[0m
+  [0;34mLogs complets :[0m /tmp/ztna-bootstrap-20260226-125240.log
+
+[1;33m[1mCommandes disponibles :[0m
+  [1mmake check[0m      — vérifier l'état du lab (VMs + SSH + healthz)
+  [1mmake deploy[0m     — déployer le control-plane + Keycloak
+  [1mmake deploy-gw[0m  — déployer la gateway ZTNA
+  [1mmake doctor[0m     — diagnostiquer et réparer les problèmes
+  [1mmake lab-start[0m  — redémarrer les VMs après un reboot système
+  [1mmake ssh-cp[0m     — SSH vers le control-plane
+  [1mmake ssh-gw[0m     — SSH vers la gateway
+
+[1;33mProchaine étape recommandée :[0m
+  [1mmake check[0m  (attendre 60s pour le boot cloud-init des VMs)
+  puis : [1mmake deploy && make deploy-gw[0m
+
+make quickstart
+[0;34m[1m
+╔═══════════════════════════════════════════════════════════════╗
+║      ZTNA Lab — Doctor (Diagnostic & Réparation)             ║
+║      MODE : AUTO-REPAIR                                      ║
+╚═══════════════════════════════════════════════════════════════╝
+[0m
+
+[0;34m[1m━━━ 1. Système & Matériel ━━━[0m
+  [0;32m[✔][0m OS : Ubuntu 25.10
+  [0;32m[✔][0m VT-x / AMD-V détecté dans /proc/cpuinfo
+  [0;32m[✔][0m RAM : 30 GB
+  [0;32m[✔][0m Espace libre : 622 GB
+
+[0;34m[1m━━━ 2. Paquets Système ━━━[0m
+  [0;32m[✔][0m qemu-kvm (binaire 'qemu-system-x86_64' présent)
+  [0;32m[✔][0m qemu-system-x86 (binaire 'qemu-system-x86_64' présent)
+  [0;32m[✔][0m qemu-utils (binaire 'qemu-img' présent)
+  [0;32m[✔][0m Paquet : libvirt-daemon-system
+  [0;32m[✔][0m libvirt-clients (binaire 'virsh' présent)
+  [0;32m[✔][0m Paquet : libvirt-daemon
+  [0;32m[✔][0m virtinst (binaire 'virt-install' présent)
+  [0;32m[✔][0m cpu-checker (binaire 'kvm-ok' présent)
+  [0;32m[✔][0m cloud-utils (binaire 'cloud-localds' présent)
+  [0;32m[✔][0m apparmor (binaire 'apparmor_parser' présent)
+  [0;32m[✔][0m apparmor-utils (binaire 'aa-status' présent)
+  [0;32m[✔][0m curl (binaire 'curl' présent)
+  [0;32m[✔][0m wget (binaire 'wget' présent)
+  [0;32m[✔][0m git (binaire 'git' présent)
+  [0;32m[✔][0m make (binaire 'make' présent)
+  [0;32m[✔][0m ssh (binaire 'ssh' présent)
+  [0;32m[✔][0m scp (binaire 'scp' présent)
+  [0;32m[✔][0m virsh : 11.6.0
+  [0;32m[✔][0m terraform : Terraform v1.9.8
+  [0;32m[✔][0m ssh : disponible
+  [0;32m[✔][0m scp : disponible
+  [0;32m[✔][0m curl : curl 8.14.1 (x86_64-pc-linux-gnu) libcurl/8.14.1 OpenSSL/3.5.3 zlib/1.3.1 brotli/1.1.0 zstd/1.5.7 libidn2/2.3.8 libpsl/0.21.2 libssh2/1.11.1 nghttp2/1.64.0 librtmp/2.3 OpenLDAP/2.6.10
+
+[0;34m[1m━━━ 3. Modules KVM ━━━[0m
+  [0;32m[✔][0m /dev/kvm présent — KVM opérationnel
+  [0;34m[→][0m Modules KVM non visibles dans lsmod (built-in kernel — normal sur noyaux récents)
+
+[0;34m[1m━━━ 4. Service libvirtd ━━━[0m
+  [0;32m[✔][0m libvirtd actif
+  [0;32m[✔][0m Socket libvirt présent : /var/run/libvirt/libvirt-sock
+  [0;32m[✔][0m Permissions socket : 660
+
+[0;34m[1m━━━ 5. Groupes Utilisateur (hermas) ━━━[0m
+  [0;32m[✔][0m Membre du groupe libvirt (session courante)
+  [0;32m[✔][0m Membre du groupe kvm (session courante)
+
+[0;34m[1m━━━ 6. AppArmor ━━━[0m
+  [0;32m[✔][0m AppArmor actif
+  [0;32m[✔][0m Règle AppArmor ztna-lab (images) déjà présente
+  [0;34m[→][0m 81 refus AppArmor VSCode/fusermount détectés (inoffensifs, ignorés)
+
+[0;34m[1m━━━ 7. Clé SSH ━━━[0m
+  [0;32m[✔][0m Clé SSH présente : /home/hermas/.ssh/id_ed25519
+  [0;32m[✔][0m Clé SSH synchronisée dans terraform.tfvars
+
+[0;34m[1m━━━ 8. Pool Libvirt & Répertoires ━━━[0m
+  [0;32m[✔][0m Répertoire pool : /var/lib/libvirt/images/ztna-lab
+  [0;32m[✔][0m Pool libvirt 'ztna-lab' actif
+
+[0;34m[1m━━━ 9. Terraform (provider libvirt) ━━━[0m
+  [0;32m[✔][0m Providers Terraform déjà téléchargés
+  [0;32m[✔][0m Lock file Terraform présent
+  [0;32m[✔][0m terraform.tfvars présent
+
+[0;34m[1m━━━ 10. Connexion à libvirt (virsh) ━━━[0m
+  [0;32m[✔][0m virsh --connect qemu:///system → OK
+  [0;32m[✔][0m VMs connues dans libvirt : 6
+
+[0;34m[1m━━━ 11. État des VMs ━━━[0m
+  [1;33m[⚠][0m wan-client : encoursd’exécution
+  [1;33m[⚠][0m ztna-gw : encoursd’exécution
+  [1;33m[⚠][0m ztna-cp : encoursd’exécution
+  [1;33m[⚠][0m lan-app : encoursd’exécution
+  [1;33m[⚠][0m lan-admin : encoursd’exécution
+
+[0;34m[1m━━━ 12. Réseaux libvirt ━━━[0m
+  [1;33m[⚠][0m Réseau wan-net absent (sera créé par Terraform)
+  [1;33m[⚠][0m Réseau dmz-net absent (sera créé par Terraform)
+  [1;33m[⚠][0m Réseau lan-net absent (sera créé par Terraform)
+
+[0;34m[1m━━━ 13. Erreurs récentes KVM/libvirt ━━━[0m
+  [0;32m[✔][0m Aucune erreur libvirtd dans les 10 dernières minutes
+  [0;32m[✔][0m Aucun blocage AppArmor critique (refus ptrace VSCode et fusermount ignorés — inoffensifs)
+
+[1m[0;34m━━━━━━━━━━━━━━━━━ RÉSUMÉ ━━━━━━━━━━━━━━━━━[0m
+  [0;32mOK    :[0m 45
+  [1;33mAVERT :[0m 8
+  [0;36mFIXES :[0m 0
+  [0;31mERREURS:[0m 0
+[1m[0;34m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[0m
+
+  [1;33m[1m⚠ Quelques avertissements — lab peut fonctionner[0m
+  Lancez : make up
+
+  [0;34mCommandes essentielles post-repair :[0m
+    make prereq    # re-check prérequis
+    make up        # créer/mettre à jour les VMs (Terraform)
+    make lab-start # démarrer les VMs existantes
+    make check     # vérification globale
+
+[0;34m[INFO][0m ZTNA Lab — vérification des prérequis (quickstart)
+[0;32m[OK][0m Virtualisation CPU détectée (VT-x/AMD-V)
+[0;32m[OK][0m RAM 30 GB
+[0;32m[OK][0m Espace disque 622 GB
+[0;32m[OK][0m Terraform (terraform)
+[0;32m[OK][0m Libvirt CLI (virsh)
+[0;32m[OK][0m SSH client (ssh)
+[0;32m[OK][0m SCP (scp)
+[0;32m[OK][0m Curl (curl)
+[0;32m[OK][0m Go (build local CP/GW) (go)
+[0;32m[OK][0m OpenSSL (tests manuels) (openssl)
+[0;32m[OK][0m Python3 (scripts tests) (python3)
+[0;32m[OK][0m jq (debug JSON) (jq)
+[0;32m[OK][0m Utilisateur dans le groupe libvirt
+[0;32m[OK][0m Service libvirtd actif
+
+[0;32m[OK][0m Pré-requis minimum satisfaits.
+[0;34m[INFO][0m ZTNA Lab UP (infra)
+[0;34m[INFO][0m Terraform init
+[0m[1mInitializing the backend...[0m
+[0m[1mInitializing provider plugins...[0m
+- Finding dmacvicar/libvirt versions matching "0.7.1"...
+- Using previously-installed dmacvicar/libvirt v0.7.1
+
+[0m[1m[32mTerraform has been successfully initialized![0m[32m[0m
+[0m[32m
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.[0m
+[0;34m[INFO][0m Réconciliation Terraform state <-> libvirt (pool)
+[0;32m[✓][0m Pool 'ztna-lab' déjà suivi par Terraform
+[0;34m[INFO][0m Réconciliation Terraform state <-> libvirt (réseaux)
+[0;32m[✓][0m Réseau 'wan-net' déjà suivi par Terraform
+[0;32m[✓][0m Réseau 'dmz-net' déjà suivi par Terraform
+[0;32m[✓][0m Réseau 'lan-net' déjà suivi par Terraform
+[0;34m[INFO][0m Réconciliation Terraform state <-> libvirt (domains)
+[0;32m[✓][0m wan-client déjà suivi par Terraform
+[0;32m[✓][0m ztna-gw déjà suivi par Terraform
+[0;32m[✓][0m ztna-cp déjà suivi par Terraform
+[0;32m[✓][0m lan-app déjà suivi par Terraform
+[0;32m[✓][0m lan-admin déjà suivi par Terraform
+[0;34m[INFO][0m Nettoyage des volumes cloud-init orphelins
+[0;34m[INFO][0m Terraform apply
+[0m[1mlibvirt_network.wan: Refreshing state... [id=e08b90c5-778a-4901-a9bb-81858e8799cd][0m
+[0m[1mlibvirt_pool.ztna: Refreshing state... [id=6da8e011-8d51-416e-b1ce-7d4cc1230d33][0m
+[0m[1mlibvirt_network.lan: Refreshing state... [id=9cd8a4b9-2c4c-42be-8c14-bcd1a0a0e477][0m
+[0m[1mlibvirt_network.dmz: Refreshing state... [id=c8816d99-7362-4326-acc6-3040ba1fbad8][0m
+[0m[1mlibvirt_cloudinit_disk.ztna_gw_ci: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/ztna-gw-ci.iso;1bb5cd4c-f96c-47ed-a428-1918d9597055][0m
+[0m[1mlibvirt_cloudinit_disk.lan_app_ci: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/lan-app-ci.iso;06c29dd6-cc56-4efd-bdfd-1c7ab72d2319][0m
+[0m[1mlibvirt_cloudinit_disk.wan_client_ci: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/wan-client-ci.iso;d649c817-9498-4404-9898-4ba844035c09][0m
+[0m[1mlibvirt_cloudinit_disk.lan_admin_ci: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/lan-admin-ci.iso;9d3ab61a-7044-41f3-b0e9-99dfe468dd6a][0m
+[0m[1mlibvirt_cloudinit_disk.ztna_cp_ci: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/ztna-cp-ci.iso;96e668d4-82c0-4f4b-9e34-142555d8c2fe][0m
+[0m[1mlibvirt_volume.base_image: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/ubuntu-22.04.qcow2][0m
+[0m[1mlibvirt_volume.lan_admin_disk: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/lan-admin.qcow2][0m
+[0m[1mlibvirt_volume.wan_client_disk: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/wan-client.qcow2][0m
+[0m[1mlibvirt_volume.ztna_gw_disk: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/ztna-gw.qcow2][0m
+[0m[1mlibvirt_volume.ztna_cp_disk: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/ztna-cp.qcow2][0m
+[0m[1mlibvirt_volume.lan_app_disk: Refreshing state... [id=/var/lib/libvirt/images/ztna-lab/lan-app.qcow2][0m
+[0m[1mlibvirt_domain.lan_admin: Refreshing state... [id=ab4a6f96-eb1a-4712-becb-59df4078b759][0m
+[0m[1mlibvirt_domain.lan_app: Refreshing state... [id=5183d96c-e963-4bc2-b94a-5e8edaa6c9e7][0m
+[0m[1mlibvirt_domain.ztna_gw: Refreshing state... [id=2c0dddf2-f527-4aab-8fb2-0741cf093799][0m
+[0m[1mlibvirt_domain.ztna_cp: Refreshing state... [id=44852a96-93c2-4777-83ed-d4c008bd341f][0m
+[0m[1mlibvirt_domain.wan_client: Refreshing state... [id=30b4b65f-72af-450b-97f8-0278d9dab66d][0m
+
+[0m[1m[32mNo changes.[0m[1m Your infrastructure matches the configuration.[0m
+
+[0mTerraform has compared your real infrastructure against your configuration
+and found no differences, so no changes are needed.
+[0m[1m[32m
+Apply complete! Resources: 0 added, 0 changed, 0 destroyed.
+[0m[0m[1m[32m
+Outputs:
+
+[0mip_plan = {
+  "lan_admin" = "10.10.30.11"
+  "lan_app" = "10.10.30.10"
+  "wan_client" = "10.10.10.10"
+  "ztna_cp" = "10.10.20.30"
+  "ztna_gw_dmz" = "10.10.20.20"
+  "ztna_gw_lan" = "10.10.30.20"
+  "ztna_gw_wan" = "10.10.10.20"
+}
+networks = {
+  "dmz" = "dmz-net"
+  "lan" = "lan-net"
+  "wan" = "wan-net"
+}
+[0;32m[✓][0m Infrastructure prête
+[0;34m[INFO][0m Étapes suivantes:
+[0;34m[INFO][0m   make deploy
+[0;34m[INFO][0m   make deploy-gw
+[0;34m[INFO][0m   make check
+[12:52:46] Build du control-plane...
+[12:52:46] ✓ Binaire compilé
+[12:52:46] Mode Keycloak: HTTPS (défaut) → config.lab.yaml
+[12:52:46] Test de connectivité vers ztna-cp...
+[12:52:47] ✓ ztna-cp accessible
+[12:52:47] Vérification Docker sur ztna-cp...
+[12:52:47] ✓ Docker opérationnel
+[12:52:47] Copie des fichiers vers ztna-cp...
+Warning: Permanently added '10.10.20.30' (ED25519) to the list of known hosts.
+Warning: Permanently added '10.10.20.30' (ED25519) to the list of known hosts.
+Warning: Permanently added '10.10.20.30' (ED25519) to the list of known hosts.
+[12:52:48] ✓ Fichiers copiés
+[12:52:48] Démarrage de Keycloak...
+Warning: Permanently added '10.10.20.30' (ED25519) to the list of known hosts.
+Recreating 6a132c3b3696_keycloak_keycloak_1 ... 
+
+ERROR: for 6a132c3b3696_keycloak_keycloak_1  'ContainerConfig'
+
+ERROR: for keycloak  'ContainerConfig'
+Traceback (most recent call last):
+  File "/usr/bin/docker-compose", line 33, in <module>
+    sys.exit(load_entry_point('docker-compose==1.29.2', 'console_scripts', 'docker-compose')())
+  File "/usr/lib/python3/dist-packages/compose/cli/main.py", line 81, in main
+    command_func()
+  File "/usr/lib/python3/dist-packages/compose/cli/main.py", line 203, in perform_command
+    handler(command, command_options)
+  File "/usr/lib/python3/dist-packages/compose/metrics/decorator.py", line 18, in wrapper
+    result = fn(*args, **kwargs)
+  File "/usr/lib/python3/dist-packages/compose/cli/main.py", line 1186, in up
+    to_attach = up(False)
+  File "/usr/lib/python3/dist-packages/compose/cli/main.py", line 1166, in up
+    return self.project.up(
+  File "/usr/lib/python3/dist-packages/compose/project.py", line 697, in up
+    results, errors = parallel.parallel_execute(
+  File "/usr/lib/python3/dist-packages/compose/parallel.py", line 108, in parallel_execute
+    raise error_to_reraise
+  File "/usr/lib/python3/dist-packages/compose/parallel.py", line 206, in producer
+    result = func(obj)
+  File "/usr/lib/python3/dist-packages/compose/project.py", line 679, in do
+    return service.execute_convergence_plan(
+  File "/usr/lib/python3/dist-packages/compose/service.py", line 579, in execute_convergence_plan
+    return self._execute_convergence_recreate(
+  File "/usr/lib/python3/dist-packages/compose/service.py", line 499, in _execute_convergence_recreate
+    containers, errors = parallel_execute(
+  File "/usr/lib/python3/dist-packages/compose/parallel.py", line 108, in parallel_execute
+    raise error_to_reraise
+  File "/usr/lib/python3/dist-packages/compose/parallel.py", line 206, in producer
+    result = func(obj)
+  File "/usr/lib/python3/dist-packages/compose/service.py", line 494, in recreate
+    return self.recreate_container(
+  File "/usr/lib/python3/dist-packages/compose/service.py", line 612, in recreate_container
+    new_container = self.create_container(
+  File "/usr/lib/python3/dist-packages/compose/service.py", line 330, in create_container
+    container_options = self._get_container_create_options(
+  File "/usr/lib/python3/dist-packages/compose/service.py", line 921, in _get_container_create_options
+    container_options, override_options = self._build_container_volume_options(
+  File "/usr/lib/python3/dist-packages/compose/service.py", line 960, in _build_container_volume_options
+    binds, affinity = merge_volume_bindings(
+  File "/usr/lib/python3/dist-packages/compose/service.py", line 1548, in merge_volume_bindings
+    old_volumes, old_mounts = get_container_data_volumes(
+  File "/usr/lib/python3/dist-packages/compose/service.py", line 1579, in get_container_data_volumes
+    container.image_config['ContainerConfig'].get('Volumes') or {}
+KeyError: 'ContainerConfig'
+make: *** [Makefile:138: deploy] Error 1

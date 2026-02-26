@@ -70,12 +70,19 @@ func ExtractSubjectFromCert(cert *x509.Certificate, log *slog.Logger) domain.Sub
 		subject.Username = subject.Sub
 	}
 
-	// TODO: Extraire les groupes depuis les extensions X.509 custom
-	//       ou depuis un champ spécifique du certificat.
-	//       ⚠️ ATTENTION STALENESS : les groupes dans le certificat
-	//       reflètent l'état au moment de l'émission. Si l'utilisateur
-	//       a été ajouté/retiré d'un groupe, le certificat ne le reflète
-	//       pas. Pour les décisions critiques, re-vérifier auprès du CP.
+	// Extraire les groupes depuis Subject.Organization
+	// Le CP encode les groupes OIDC dans l'Organisation du cert (voir deviceca.go)
+	// ex: cert.Subject.Organization = ["ztna-admins"]
+	if len(cert.Subject.Organization) > 0 {
+		subject.Groups = cert.Subject.Organization
+		log.Debug("groupes extraits depuis Subject.Organization", "groups", subject.Groups)
+	}
+
+	// Extraire le sub OIDC depuis Subject.SerialNumber si disponible (contient le UUID)
+	if cert.Subject.SerialNumber != "" && subject.Username == subject.Sub {
+		subject.Sub = cert.Subject.SerialNumber
+		log.Debug("sub extrait depuis Subject.SerialNumber", "sub", subject.Sub)
+	}
 
 	return subject
 }

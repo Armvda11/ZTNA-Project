@@ -57,15 +57,17 @@ echo -e "    \033[2mCSR Subject: $(openssl req -noout -subject -in $CSR_FILE 2>/
 
 echo ""
 echo -e "\033[0;36m[wan-client]\033[0m Envoi CSR au Control Plane (POST /api/v1/credentials/device-cert)…"
+# Le CP attend le champ "csr_pem" (PEM complet avec sauts de ligne)
 CSR_PEM=$(cat "$CSR_FILE")
 RESPONSE=$(curl -sk --max-time 15 \
     -X POST "${CP_API}/api/v1/credentials/device-cert" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}" \
     -H "Content-Type: application/json" \
-    -d "{\"csr\":\"$(echo "$CSR_PEM" | sed ':a;N;$!ba;s/\n/\\n/g')\"}" \
+    -d "{\"csr_pem\": $(python3 -c "import json,sys; print(json.dumps(open('$CSR_FILE').read()))") }" \
     2>&1)
 
-CERT=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('certificate',''))" 2>/dev/null || true)
+# La réponse CP a le champ "certificate_pem" (pas "certificate")
+CERT=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('certificate_pem',''))" 2>/dev/null || true)
 
 if [[ -z "$CERT" ]]; then
     echo -e "\033[0;31m[✗]\033[0m Échec — réponse CP:"
@@ -75,7 +77,9 @@ fi
 
 echo "$CERT" > "$CERT_FILE"
 
-EXPIRES_AT=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('expires_at','?'))" 2>/dev/null || echo "?")
+EXPIRES_AT=$(echo "$RESPONSE" | python3 -c "import sys,json; v=json.load(sys.stdin).get('expires_at','?'); print(str(v)[:16] if v != '?' else '?')" 2>/dev/null || echo "?")
+SERIAL_FROM_RESP=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('serial','?'))" 2>/dev/null || echo "?")
+echo "$SERIAL_FROM_RESP" > "$WORK_DIR/device_cert_serial.txt"
 SERIAL=$(openssl x509 -noout -serial -in "$CERT_FILE" 2>/dev/null | cut -d= -f2 || echo "?")
 SUBJECT=$(openssl x509 -noout -subject -in "$CERT_FILE" 2>/dev/null || echo "?")
 ISSUER=$(openssl x509 -noout -issuer  -in "$CERT_FILE" 2>/dev/null || echo "?")

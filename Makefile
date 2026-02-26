@@ -286,7 +286,7 @@ build-cp:
 	@echo "$(GREEN)[✓]$(NC) control-plane/cp-linux-amd64"
 
 build-gw:
-	@cd gateway && GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ztna-gateway-linux-amd64 .
+	@cd gateway/cmd/ztna-gateway && GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../../ztna-gateway-linux-amd64 .
 	@echo "$(GREEN)[✓]$(NC) gateway/ztna-gateway-linux-amd64"
 
 build-cli:

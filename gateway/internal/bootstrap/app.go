@@ -8,15 +8,18 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"time"
 
-	authorize "ztna-gateway/internal/infra/authz"
-	crl "ztna-gateway/internal/infra/revocation"
 	"ztna-gateway/internal/config"
+	authorize "ztna-gateway/internal/infra/authz"
 	decisioncache "ztna-gateway/internal/infra/cache"
 	"ztna-gateway/internal/infra/mtls"
-	protocol "ztna-gateway/internal/usecase/connect"
 	"ztna-gateway/internal/infra/proxy"
+	crl "ztna-gateway/internal/infra/revocation"
+	tlsutil "ztna-gateway/internal/infra/tls"
 	"ztna-gateway/internal/infra/session"
+	protocol "ztna-gateway/internal/usecase/connect"
 )
 
 // App regroupe tous les composants nécessaires à l'exécution de la Gateway ZTNA.
@@ -48,8 +51,8 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 	crlStore := crl.NewStore()
 	decisionCache := decisioncache.New(cfg.DecisionCacheMaxKeys)
 
-	// Handler de protocole CONNECT
-	connectHandler := protocol.NewHandler(authzClient, tcpProxy, sessionMgr, log)
+	// Handler de protocole CONNECT (avec CRL store pour vérification de révocation)
+	connectHandler := protocol.NewHandler(authzClient, tcpProxy, sessionMgr, crlStore, log)
 
 	// Listener mTLS
 	listener, err := mtls.NewListener(cfg, connectHandler, log)
@@ -87,6 +90,23 @@ func (a *App) Run(ctx context.Context) error {
 		"crl_ready", a.crl != nil,
 		"decision_cache_ready", a.cache != nil,
 	)
+
+	// Démarrer le refresh CRL en background
+	if a.crl != nil && a.cfg.ControlPlane.BaseURL != "" {
+		crlInterval := a.cfg.CRLRefreshInterval
+		if crlInterval <= 0 {
+			crlInterval = 30 * time.Second
+		}
+		// HTTP client avec TLS skip verify pour le lab (même config que authz client)
+		crlHTTP, err := tlsutil.NewControlPlaneHTTPClient(a.cfg, 10*time.Second)
+		if err != nil || crlHTTP == nil {
+			// Fallback : client sans vérification TLS
+			crlHTTP = &http.Client{Timeout: 10 * time.Second}
+		}
+		a.crl.StartAutoRefresh(ctx, a.cfg.ControlPlane.BaseURL, crlHTTP, crlInterval, a.log)
+		a.log.Info("CRL auto-refresh démarré", "interval", crlInterval)
+	}
+
 	return a.listener.Listen(ctx)
 }
 

@@ -25,8 +25,9 @@ echo -e ""
 echo -e "${INFO}Révocation via API admin du Control Plane…${NC}"
 print_separator
 
-# Récupérer le serial du cert depuis wan-client
-SERIAL=$(ssh_client "openssl x509 -noout -serial -in /tmp/ztna-demo/device.crt 2>/dev/null | cut -d= -f2" 2>/dev/null || true)
+# Récupérer le serial du cert depuis wan-client (openssl retourne en majuscules)
+# Le CP stocke en minuscules (fmt.Sprintf("%x",...)) → conversion nécessaire
+SERIAL=$(ssh_client "openssl x509 -noout -serial -in /tmp/ztna-demo/device.crt 2>/dev/null | cut -d= -f2 | tr '[:upper:]' '[:lower:]'" 2>/dev/null || true)
 
 if [[ -z "$SERIAL" ]]; then
     print_err "Certificat introuvable sur wan-client — exécutez d'abord l'étape 03"

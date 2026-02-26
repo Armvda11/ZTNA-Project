@@ -75,11 +75,11 @@ func (s *Service) Run(ctx context.Context, resourceName string) error {
 // le "local endpoint" du tunnel.
 type stdinStdoutConn struct{}
 
-func (s *stdinStdoutConn) Read(b []byte) (int, error)  { return os.Stdin.Read(b) }
-func (s *stdinStdoutConn) Write(b []byte) (int, error) { return os.Stdout.Write(b) }
-func (s *stdinStdoutConn) Close() error                { return nil }
-func (s *stdinStdoutConn) LocalAddr() net.Addr         { return &net.UnixAddr{Name: "stdin"} }
-func (s *stdinStdoutConn) RemoteAddr() net.Addr        { return &net.UnixAddr{Name: "stdout"} }
+func (s *stdinStdoutConn) Read(b []byte) (int, error)         { return os.Stdin.Read(b) }
+func (s *stdinStdoutConn) Write(b []byte) (int, error)        { return os.Stdout.Write(b) }
+func (s *stdinStdoutConn) Close() error                       { return nil }
+func (s *stdinStdoutConn) LocalAddr() net.Addr                { return &net.UnixAddr{Name: "stdin"} }
+func (s *stdinStdoutConn) RemoteAddr() net.Addr               { return &net.UnixAddr{Name: "stdout"} }
 func (s *stdinStdoutConn) SetDeadline(t time.Time) error      { return nil }
 func (s *stdinStdoutConn) SetReadDeadline(t time.Time) error  { return nil }
 func (s *stdinStdoutConn) SetWriteDeadline(t time.Time) error { return nil }

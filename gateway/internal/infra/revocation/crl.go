@@ -6,7 +6,8 @@
 package crl
 
 import (
-	"context"
+	"crypto/x509"
+	"fmt"
 	"sync"
 )
 
@@ -52,14 +53,8 @@ func (s *Store) Snapshot() map[string]struct{} {
 	return cp
 }
 
-// StartAutoRefresh est un hook d'intégration future.
-//
-// TODO:
-// - appeler un endpoint CP exposant la CRL
-// - parser la réponse (PEM/DER)
-// - convertir les serials
-// - appeler Replace
-func (s *Store) StartAutoRefresh(ctx context.Context) error {
-	_ = ctx
-	return nil
+// CertSerial retourne le numéro de série d'un certificat X.509 en hex minuscules,
+// dans le même format que celui stocké par le CP: fmt.Sprintf("%x", sn.Bytes()).
+func CertSerial(cert *x509.Certificate) string {
+	return fmt.Sprintf("%x", cert.SerialNumber.Bytes())
 }

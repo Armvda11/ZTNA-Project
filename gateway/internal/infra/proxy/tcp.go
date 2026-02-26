@@ -81,8 +81,8 @@ func (p *TCPProxy) Proxy(ctx context.Context, clientConn net.Conn, targetHost st
 	start := time.Now()
 
 	var (
-		mu           sync.Mutex
-		bytesSent    int64
+		mu            sync.Mutex
+		bytesSent     int64
 		bytesReceived int64
 	)
 

@@ -44,40 +44,44 @@ func NewClient(cfg *config.Config, log *slog.Logger) *Client {
 // retourne la décision (allow/deny).
 //
 // La requête est envoyée à :
-//   POST {control_plane.base_url}/api/v1/pep/authorize
+//
+//	POST {control_plane.base_url}/api/v1/pep/authorize
 //
 // Headers :
-//   Content-Type: application/json
-//   X-PEP-ID:     {pep.id}
-//   X-PEP-TOKEN:  {pep.token}
+//
+//	Content-Type: application/json
+//	X-PEP-ID:     {pep.id}
+//	X-PEP-TOKEN:  {pep.token}
 //
 // Body (JSON) — correspond au format attendu par le CP :
-//   {
-//     "subject": {
-//       "sub": "<sub from cert>",
-//       "username": "<username from cert>",
-//       "groups": ["<group1>", ...]
-//     },
-//     "action": "connect",
-//     "resource": {
-//       "type": "ssh",
-//       "host": "10.10.20.40",
-//       "port": 22
-//     },
-//     "context": {
-//       "src_ip": "10.10.20.10",
-//       "gateway_id": "ztna-gw-1"
-//     }
-//   }
+//
+//	{
+//	  "subject": {
+//	    "sub": "<sub from cert>",
+//	    "username": "<username from cert>",
+//	    "groups": ["<group1>", ...]
+//	  },
+//	  "action": "connect",
+//	  "resource": {
+//	    "type": "ssh",
+//	    "host": "10.10.20.40",
+//	    "port": 22
+//	  },
+//	  "context": {
+//	    "src_ip": "10.10.20.10",
+//	    "gateway_id": "ztna-gw-1"
+//	  }
+//	}
 //
 // Réponse attendue du CP :
-//   {
-//     "decision": "allow" | "deny",
-//     "ttl_seconds": 300,
-//     "reason": "...",
-//     "policy_version": 1,
-//     "decision_id": "uuid"
-//   }
+//
+//	{
+//	  "decision": "allow" | "deny",
+//	  "ttl_seconds": 300,
+//	  "reason": "...",
+//	  "policy_version": 1,
+//	  "decision_id": "uuid"
+//	}
 //
 // TODO: Implémenter l'appel HTTP complet avec :
 //   - TLS vers le CP (utiliser control_plane.ca_file si configuré)
@@ -146,7 +150,7 @@ type AuthzRequest struct {
 	Subject  domain.SubjectRef `json:"subject"`
 	Action   string            `json:"action"`
 	Resource ResourceRef       `json:"resource"`
-	Context  AuthzContext       `json:"context"`
+	Context  AuthzContext      `json:"context"`
 }
 
 // ResourceRef identifie la ressource pour la requête d'autorisation.
@@ -164,8 +168,9 @@ type AuthzContext struct {
 }
 
 // AuthzResponse est la réponse du CP à une requête d'autorisation.
+// Note: le CP renvoie le champ "effect" (et non "decision") — cf. pep_authorize.go
 type AuthzResponse struct {
-	Decision      string `json:"decision"`
+	Decision      string `json:"effect"`
 	TTLSeconds    int    `json:"ttl_seconds"`
 	Reason        string `json:"reason"`
 	PolicyVersion int64  `json:"policy_version"`

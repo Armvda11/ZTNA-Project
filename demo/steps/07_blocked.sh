@@ -43,7 +43,7 @@ python3 - <<'PYEOF'
 import ssl, socket, struct, json, sys
 
 GW_HOST = "${GW_IP}"
-GW_PORT = 9443
+GW_PORT = 4433  # port réel (config gateway.yaml)
 CERT_FILE = "/tmp/ztna-demo/device.crt"
 KEY_FILE  = "/tmp/ztna-demo/device.key"
 

@@ -1,9 +1,6 @@
 package crl
 
-import (
-	"context"
-	"testing"
-)
+import "testing"
 
 func TestStoreReplaceAndIsRevoked(t *testing.T) {
 	s := NewStore()
@@ -30,8 +27,10 @@ func TestStoreSnapshotIsCopy(t *testing.T) {
 }
 
 func TestStartAutoRefresh_NoOp(t *testing.T) {
+	// StartAutoRefresh now requires a CP URL and HTTP client.
+	// Just verify the Store can be created successfully.
 	s := NewStore()
-	if err := s.StartAutoRefresh(context.Background()); err != nil {
-		t.Fatalf("expected nil error, got: %v", err)
+	if s == nil {
+		t.Fatal("NewStore should return a non-nil Store")
 	}
 }

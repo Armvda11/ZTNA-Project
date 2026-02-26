@@ -17,9 +17,10 @@ import (
 	"net"
 	"time"
 
-	"ztna-gateway/internal/infra/authz"
+	authorize "ztna-gateway/internal/infra/authz"
 	"ztna-gateway/internal/infra/mtls"
 	"ztna-gateway/internal/infra/proxy"
+	crl "ztna-gateway/internal/infra/revocation"
 	"ztna-gateway/internal/infra/session"
 )
 
@@ -28,15 +29,17 @@ type Handler struct {
 	authz    *authorize.Client
 	proxy    *proxy.TCPProxy
 	sessions *session.Manager
+	crl      *crl.Store
 	log      *slog.Logger
 }
 
 // NewHandler crée un nouveau handler de protocole CONNECT.
-func NewHandler(authz *authorize.Client, proxy *proxy.TCPProxy, sessions *session.Manager, log *slog.Logger) *Handler {
+func NewHandler(authz *authorize.Client, proxy *proxy.TCPProxy, sessions *session.Manager, crlStore *crl.Store, log *slog.Logger) *Handler {
 	return &Handler{
 		authz:    authz,
 		proxy:    proxy,
 		sessions: sessions,
+		crl:      crlStore,
 		log:      log,
 	}
 }
@@ -77,6 +80,22 @@ func (h *Handler) HandleConnection(conn net.Conn, clientCert *x509.Certificate) 
 		"username", subject.Username,
 		"remote_addr", conn.RemoteAddr().String(),
 	)
+
+	// 1b. Vérifier si le certificat est révoqué (CRL locale)
+	if h.crl != nil {
+		serial := crl.CertSerial(clientCert)
+		if h.crl.IsRevoked(serial) {
+			h.log.Info("certificat révoqué refusé",
+				"serial", serial,
+				"sub", subject.Sub,
+			)
+			WriteMessage(conn, ConnectResponse{ //nolint:errcheck
+				Decision: "deny",
+				Reason:   "certificate revoked",
+			})
+			return
+		}
+	}
 
 	// 2. Lire la requête CONNECT (timeout de lecture)
 	conn.SetDeadline(time.Now().Add(30 * time.Second)) //nolint:errcheck

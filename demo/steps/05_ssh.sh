@@ -47,6 +47,16 @@ echo -e "\033[0;32m[✓]\033[0m Paire de clés SSH Ed25519 éphémère généré
 
 # 2. Demander le certificat SSH au CP
 PUBKEY=\$(cat "\$KEY_FILE.pub")
+# Extraire le username depuis le JWT pour l'inclure dans les principals
+# (la politique CP exige que le username soit inclus s'il est dans les allowed_principals)
+JWT_PAYLOAD=\$(echo "\${ACCESS_TOKEN}" | cut -d'.' -f2 | python3 -c "
+import sys, json, base64
+raw = sys.stdin.read().strip()
+padded = raw + '=' * (-len(raw) % 4)
+d = json.loads(base64.urlsafe_b64decode(padded))
+print(d.get('preferred_username', d.get('sub', '')))
+" 2>/dev/null || echo "ztna")
+OIDC_USER="\${JWT_PAYLOAD}"
 echo ""
 echo -e "\033[0;36m[wan-client]\033[0m Demande de certificat SSH au CP…"
 
@@ -54,7 +64,7 @@ RESPONSE=\$(curl -sk --max-time 15 \\
     -X POST "\${CP_API}/api/v1/credentials/ssh-cert" \\
     -H "Authorization: Bearer \${ACCESS_TOKEN}" \\
     -H "Content-Type: application/json" \\
-    -d "{\"public_key\":\"\$(echo \$PUBKEY | sed 's/\"/\\\"/g')\"}" 2>&1)
+    -d "{\"public_key\":\"\$(echo \$PUBKEY | sed 's/\"/\\\"/g')\", \"principals\":[\"ztna\",\"\${OIDC_USER}\"]}" 2>&1)
 
 CERT=\$(echo "\$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('certificate',''))" 2>/dev/null || true)
 
@@ -81,9 +91,8 @@ chmod 600 "\$KEY_FILE" "\$CERT_FILE"
 ssh -o StrictHostKeyChecking=no \\
     -o UserKnownHostsFile=/dev/null \\
     -o ConnectTimeout=10 \\
+    -o "ProxyCommand=ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -l ztna -W %h:%p ${GW_IP}" \\
     -i "\$KEY_FILE" \\
-    -i "\$CERT_FILE" \\
-    -J "ztna@${GW_IP}" \\
     "ztna@${APP_IP}" \\
     'echo -e "\033[0;32m[lan-app]\033[0m Connexion SSH réussie!" && echo "  hostname: \$(hostname)" && echo "  user:     \$(id -un)" && echo "  uptime:   \$(uptime -p)"' 2>/dev/null
 
