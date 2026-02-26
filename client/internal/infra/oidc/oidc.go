@@ -44,10 +44,12 @@ type Client struct {
 }
 
 // NewClient crée un nouveau client OIDC configuré.
+// Utilise un client HTTP TLS dédié au provider OIDC (oidc.ca_file),
+// distinct de celui du Control Plane.
 func NewClient(cfg *config.Config, log *slog.Logger) *Client {
-	httpClient, err := tlsinfra.NewControlPlaneHTTPClient(cfg)
+	httpClient, err := tlsinfra.NewOIDCHTTPClient(cfg)
 	if err != nil {
-		log.Warn("client HTTP TLS par défaut indisponible, fallback sur client HTTP standard", "error", err)
+		log.Warn("client HTTP TLS OIDC indisponible, fallback sur client HTTP standard", "error", err)
 		httpClient = http.DefaultClient
 	}
 
@@ -134,12 +136,6 @@ func (c *Client) LoginPasswordGrantLAB(ctx context.Context, username, password s
 //  1. Le client demande un device_code et un user_code au provider
 //  2. L'utilisateur ouvre l'URL affichée et entre le user_code
 //  3. Le client poll le provider jusqu'à obtenir les tokens
-//
-// TODO: Implémenter le flux Device Authorization :
-//   - POST {issuer}/protocol/openid-connect/auth/device pour obtenir device_code
-//   - Afficher l'URL de vérification et le user_code à l'utilisateur
-//   - Poll {issuer}/protocol/openid-connect/token avec grant_type=urn:ietf:params:oauth:grant-type:device_code
-//   - Gérer les réponses authorization_pending, slow_down, expired_token
 func (c *Client) DeviceFlowLogin(ctx context.Context) (*TokenSet, error) {
 	c.log.Info("dÃ©marrage du flux Device Authorization")
 
@@ -285,32 +281,83 @@ func (c *Client) DeviceFlowLogin(ctx context.Context) (*TokenSet, error) {
 
 // RefreshAccessToken utilise le refresh_token stocké pour obtenir un
 // nouveau access_token sans ré-authentification de l'utilisateur.
-//
-// TODO: Implémenter l'appel HTTP :
-//
-//	POST {issuer}/protocol/openid-connect/token
-//	grant_type=refresh_token
-//	&client_id={client_id}
-//	&refresh_token={refresh_token}
-//
-// TODO: Mettre à jour le TokenSet stocké
 func (c *Client) RefreshAccessToken(ctx context.Context) (*TokenSet, error) {
 	c.log.Info("rafraîchissement de l'access token")
 
-	// TODO: charger le refresh_token depuis le store
-	// TODO: appeler l'endpoint token avec grant_type=refresh_token
-	// TODO: mettre à jour le store avec les nouveaux tokens
+	tokens, err := c.store.Load()
+	if err != nil {
+		return nil, fmt.Errorf("impossible de charger les tokens pour refresh: %w", err)
+	}
+	if tokens.RefreshToken == "" {
+		return nil, fmt.Errorf("pas de refresh_token stocké: relancez 'ztna login'")
+	}
 
-	return nil, fmt.Errorf("TODO: RefreshAccessToken non implémenté")
+	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
+	form.Set("client_id", c.cfg.OIDC.ClientID)
+	form.Set("refresh_token", tokens.RefreshToken)
+	form.Set("scope", "openid profile")
+	if c.cfg.OIDC.ClientSecret != "" {
+		form.Set("client_secret", c.cfg.OIDC.ClientSecret)
+	}
+
+	tokenEndpoint := strings.TrimRight(c.cfg.OIDC.Issuer, "/") + "/protocol/openid-connect/token"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("impossible de construire la requête refresh token: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("échec de l'appel refresh token OIDC: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("échec refresh token endpoint (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		IDToken      string `json:"id_token"`
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int64  `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return nil, fmt.Errorf("impossible de parser la réponse refresh token: %w", err)
+	}
+	if tokenResp.AccessToken == "" {
+		return nil, fmt.Errorf("réponse refresh token invalide: access_token manquant")
+	}
+
+	newTokens := &TokenSet{
+		AccessToken:  tokenResp.AccessToken,
+		RefreshToken: tokenResp.RefreshToken,
+		IDToken:      tokenResp.IDToken,
+		TokenType:    tokenResp.TokenType,
+		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
+	}
+
+	// Rotation : si le serveur ne renvoie pas de nouveau refresh_token,
+	// on conserve l'ancien pour les prochains rafraîchissements.
+	if newTokens.RefreshToken == "" {
+		newTokens.RefreshToken = tokens.RefreshToken
+	}
+
+	if err := c.store.Save(newTokens); err != nil {
+		return nil, fmt.Errorf("impossible de stocker les tokens rafraîchis: %w", err)
+	}
+
+	c.log.Info("access token rafraîchi avec succès", "expires_at", newTokens.ExpiresAt.UTC().Format(time.RFC3339))
+	return newTokens, nil
 }
 
 // GetValidAccessToken retourne un access_token valide, en le rafraîchissant
 // si nécessaire. C'est la méthode principale à utiliser par les autres
 // composants (credentials, tunnel) pour obtenir un token.
-//
-// TODO: Vérifier l'expiration du token stocké (avec marge de sécurité)
-// TODO: Si expiré, appeler RefreshAccessToken()
-// TODO: Si le refresh échoue, retourner une erreur indiquant de relancer login
 func (c *Client) GetValidAccessToken(ctx context.Context) (string, error) {
 	tokens, err := c.store.Load()
 	if err != nil {

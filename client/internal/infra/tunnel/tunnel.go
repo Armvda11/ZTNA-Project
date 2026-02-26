@@ -7,11 +7,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
+	"time"
 
 	"client/internal/config"
+	"client/internal/core/domain"
 )
 
 // Manager gère les connexions tunnel mTLS vers la Gateway.
@@ -84,9 +87,6 @@ func (m *Manager) buildTLSConfig(certPEM, keyPEM []byte) (*tls.Config, error) {
 //  6. Si allow : retourner la connexion pour le relais de trafic
 //  7. Si deny : fermer la connexion et retourner l'erreur
 //
-// TODO: Implémenter le handshake CONNECT complet
-// TODO: Implémenter le relais de trafic bidirectionnel
-// TODO: Gérer les timeouts de connexion et de handshake
 // TODO: Supporter la reconnexion automatique en cas de perte de connexion
 func (m *Manager) Connect(certPEM, keyPEM []byte, resource string) (net.Conn, error) {
 	m.log.Info("établissement du tunnel mTLS", "gateway", m.cfg.Gateway.Address, "resource", resource)
@@ -96,39 +96,87 @@ func (m *Manager) Connect(certPEM, keyPEM []byte, resource string) (net.Conn, er
 		return nil, fmt.Errorf("erreur de configuration TLS: %w", err)
 	}
 
-	// TODO: établir la connexion TLS
-	//   conn, err := tls.Dial("tcp", m.cfg.Gateway.Address, tlsConfig)
-	_ = tlsConfig
+	// Établir la connexion TLS avec timeout
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	conn, err := tls.DialWithDialer(dialer, "tcp", m.cfg.Gateway.Address, tlsConfig)
+	if err != nil {
+		return nil, fmt.Errorf("%w: impossible de se connecter à la Gateway %s: %v",
+			domain.ErrGatewayUnreachable, m.cfg.Gateway.Address, err)
+	}
 
-	// TODO: construire et envoyer la ConnectRequest (voir protocol.go)
-	//   req := protocol.ConnectRequest{
-	//       Action:   "connect",
-	//       Resource: protocol.ResourceRef{...},
-	//       Context:  protocol.ConnectContext{...},
-	//   }
+	// Construire et envoyer la ConnectRequest
+	resRef := ParseResource(resource)
+	req := ConnectRequest{
+		ProtocolVersion: CurrentProtocolVersion,
+		Action:          "connect",
+		Resource:        resRef,
+		Context: ConnectContext{
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		},
+	}
 
-	// TODO: lire la ConnectResponse
-	// TODO: vérifier Decision == "allow"
-	// TODO: retourner la connexion pour le relais
+	if err := WriteMessage(conn, req); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("impossible d'envoyer la requête CONNECT: %w", err)
+	}
 
-	return nil, fmt.Errorf("TODO: Connect non implémenté")
+	// Lire la réponse de la Gateway
+	var resp ConnectResponse
+	if err := ReadMessage(conn, &resp); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("impossible de lire la réponse CONNECT: %w", err)
+	}
+
+	if resp.Decision != "allow" {
+		conn.Close()
+		reason := resp.Reason
+		if reason == "" {
+			reason = "raison non communiquée"
+		}
+		return nil, fmt.Errorf("%w: %s (decision_id=%s)", domain.ErrConnectionDenied, reason, resp.DecisionID)
+	}
+
+	m.log.Info("tunnel mTLS établi", "decision_id", resp.DecisionID, "ttl_seconds", resp.TTLSeconds)
+	return conn, nil
 }
 
 // RelayTraffic relaie le trafic bidirectionnel entre la connexion locale
 // et le tunnel mTLS.
 //
-// TODO: Implémenter le relais avec :
-//   - io.Copy bidirectionnel (goroutines)
-//   - Gestion du half-close TCP
-//   - Timeouts d'inactivité
-//   - Compteurs de trafic pour audit
-//   - Arrêt propre via context cancellation
+// TODO: Ajouter les compteurs de trafic pour audit
+// TODO: Arrêt propre via context cancellation
 func (m *Manager) RelayTraffic(tunnel net.Conn, local net.Conn) error {
 	m.log.Debug("démarrage du relais de trafic bidirectionnel")
 
-	// TODO: lancer deux goroutines pour copier dans chaque direction
-	// TODO: gérer la fermeture propre quand une direction se termine
-	// TODO: respecter le contexte pour l'arrêt forcé
+	errc := make(chan error, 2)
 
-	return fmt.Errorf("TODO: RelayTraffic non implémenté")
+	// Tunnel → Local
+	go func() {
+		_, err := io.Copy(local, tunnel)
+		errc <- err
+	}()
+
+	// Local → Tunnel
+	go func() {
+		_, err := io.Copy(tunnel, local)
+		errc <- err
+	}()
+
+	// Attendre la première erreur (une direction se ferme)
+	err := <-errc
+
+	// Fermer les deux côtés pour débloquer la goroutine restante
+	tunnel.Close()
+	local.Close()
+
+	// Attendre la seconde goroutine
+	<-errc
+
+	if err != nil {
+		m.log.Debug("relais de trafic terminé", "error", err)
+	} else {
+		m.log.Debug("relais de trafic terminé proprement")
+	}
+
+	return err
 }

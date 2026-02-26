@@ -5,7 +5,8 @@
 #   FORWARD policy = DROP par défaut.
 #   Seules les connexions strictement nécessaires à l'auth/enrollment sont ouvertes :
 #     WAN → DMZ, TCP uniquement, src=wan-client, dst=ztna-cp :
-#       · port 8081 : Keycloak  (token OIDC — étape 1 des deux flux)
+#       · port 8081 : Keycloak HTTP  (token OIDC — legacy/fallback lab)
+#       · port 8443 : Keycloak HTTPS (token OIDC — cible)
 #       · port 8080 : Control Plane (device-cert enrollment — étape 2 Flux2 / Flux1)
 #   MASQUERADE uniquement WAN→DMZ (corrige l'asymétrie de routage TCP).
 #   PAS de MASQUERADE WAN→LAN : la GW proxifie elle-même vers le LAN,
@@ -31,7 +32,8 @@ CLIENT_IP="${CLIENT_IP:-10.10.10.10}"  # wan-client (source autorisée)
 WAN_NAT_IP="${WAN_NAT_IP:-10.10.10.1}" # passerelle libvirt WAN (NAT source vue sur GW)
 CLIENT_SOURCES="${CLIENT_SOURCES:-${CLIENT_IP},${WAN_NAT_IP}}"
 CP_IP="${CP_IP:-10.10.20.30}"         # ztna-cp    (destination autorisée)
-KC_PORT="${KC_PORT:-8081}"             # Keycloak OIDC
+KC_HTTP_PORT="${KC_HTTP_PORT:-8081}"   # Keycloak OIDC HTTP  (legacy/fallback)
+KC_HTTPS_PORT="${KC_HTTPS_PORT:-8443}" # Keycloak OIDC HTTPS (cible)
 CP_PORT="${CP_PORT:-8080}"             # Control Plane API
 WAN_CIDR="10.10.10.0/24"              # sous-réseau WAN (pour MASQUERADE)
 LAN_CIDR="${LAN_CIDR:-10.10.30.0/24}" # sous-réseau LAN (jamais accessible directement depuis WAN)
@@ -40,7 +42,7 @@ IFS=',' read -r -a SOURCE_IPS <<< "${CLIENT_SOURCES}"
 
 log "Interfaces : WAN=${WAN_IF} DMZ=${DMZ_IF}"
 log "Sources WAN autorisées vers DMZ : ${CLIENT_SOURCES}"
-log "Destination CP   : ${CP_IP}  ports ${KC_PORT} (KC) ${CP_PORT} (CP)"
+log "Destination CP   : ${CP_IP}  ports ${KC_HTTP_PORT}/${KC_HTTPS_PORT} (KC) ${CP_PORT} (CP)"
 
 # ── ip_forward ───────────────────────────────────────────────────────────────
 log "Vérification ip_forward..."
@@ -87,11 +89,12 @@ ensure_forward_allow() {
   fi
 }
 
-# ── Règles 2/3 : WAN→DMZ TCP:8081 et 8080 pour chaque source autorisée ──────
+# ── Règles 2/3/4 : WAN→DMZ TCP:8081, 8443 et 8080 pour chaque source autorisée ──
 for src_ip in "${SOURCE_IPS[@]}"; do
   src_ip="$(echo "${src_ip}" | xargs)"
   [[ -z "${src_ip}" ]] && continue
-  ensure_forward_allow "${src_ip}" "${KC_PORT}" "Keycloak"
+  ensure_forward_allow "${src_ip}" "${KC_HTTP_PORT}"  "Keycloak HTTP"
+  ensure_forward_allow "${src_ip}" "${KC_HTTPS_PORT}" "Keycloak HTTPS"
   ensure_forward_allow "${src_ip}" "${CP_PORT}" "Control Plane"
 done
 

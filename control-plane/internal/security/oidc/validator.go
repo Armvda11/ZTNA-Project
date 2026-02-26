@@ -2,10 +2,13 @@ package oidc
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -64,8 +67,9 @@ func NewValidator(cfg config.OIDCConfig) (*Validator, error) {
 
 	// Allow HTTP issuer for lab/dev (Keycloak without TLS)
 	// Note: allow_http_issuer does not disable TLS verification for https:// issuers
-	httpClient := &http.Client{
-		Timeout: 10 * time.Second,
+	httpClient, err := buildJWKSHTTPClient(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("build jwks http client: %w", err)
 	}
 
 	return &Validator{
@@ -277,4 +281,43 @@ func claimStrings(claims map[string]any, name string) []string {
 	default:
 		return nil
 	}
+}
+
+// buildJWKSHTTPClient construit un http.Client avec support TLS optionnel
+// pour récupérer les clés JWKS depuis un endpoint HTTPS Keycloak
+// potentiellement protégé par un certificat auto-signé.
+func buildJWKSHTTPClient(cfg config.OIDCConfig) (*http.Client, error) {
+	// If no custom CA and no insecure flag, use plain client
+	if cfg.CAFile == "" && !cfg.InsecureSkipVerify {
+		return &http.Client{Timeout: 10 * time.Second}, nil
+	}
+
+	tlsConfig := &tls.Config{
+		MinVersion:         tls.VersionTLS13,
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
+	}
+
+	if cfg.CAFile != "" {
+		caData, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("impossible de lire oidc.ca_file %s: %w", cfg.CAFile, err)
+		}
+
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caData) {
+			return nil, fmt.Errorf("oidc.ca_file invalide (PEM): %s", cfg.CAFile)
+		}
+		tlsConfig.RootCAs = pool
+	}
+
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig:     tlsConfig,
+			TLSHandshakeTimeout: 10 * time.Second,
+			IdleConnTimeout:     30 * time.Second,
+			MaxIdleConns:        8,
+			MaxIdleConnsPerHost: 4,
+		},
+	}, nil
 }

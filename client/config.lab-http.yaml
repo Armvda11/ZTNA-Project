@@ -1,0 +1,39 @@
+# Configuration du client ZTNA — lab HTTP (fallback)
+#
+# ⚠️  Ce fichier utilise Keycloak en HTTP (port 8081).
+#     Utilisé uniquement quand KC_PROTO=http est passé aux scripts.
+#     La configuration par défaut (HTTPS) est dans config.lab.yaml.
+#
+# Usage : KC_PROTO=http ztna-client -config config.lab-http.yaml
+
+# Réseau lab :
+#   - Control Plane : 10.10.20.30
+#   - Gateway       : 10.10.20.20
+#   - Keycloak      : 10.10.20.30:8081 (HTTP fallback)
+
+oidc:
+  issuer: "http://10.10.20.30:8081/realms/ztna"
+  client_id: "ztna-client"
+  client_secret: ""
+  audience: ""
+
+control_plane:
+  base_url: "https://10.10.20.30:8080"
+  ca_file: "./certs/ca.crt"
+  insecure_skip_verify: false
+
+gateway:
+  address: "10.10.20.20:9443"
+
+tls:
+  ca_file: "./certs/ca.crt"
+
+storage:
+  path: "./.ztna"
+
+security:
+  insecure_allow_http_oidc: true  # HTTP mode — lab fallback only
+
+logging:
+  level: "debug"
+  format: "text"

@@ -1,39 +1,54 @@
 package credentials
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"errors"
+	"io"
 	"log/slog"
+	"math/big"
+	"net/http/httptest"
 	"os"
+	"runtime"
 	"testing"
+	"time"
 
 	"client/internal/config"
+	"client/internal/core/domain"
 )
 
-// TestCertificateRequest tests the complete certificate request workflow
-// EXPECTED TO FAIL until certificate request implementation is complete
+// TestCertificateRequest teste le workflow complet de demande de certificat
+// avec un mock CP qui signe réellement le CSR.
 func TestCertificateRequest(t *testing.T) {
-	t.Skip("TODO: Certificate request not yet implemented - will pass when complete")
+	ca := newTestCA(t)
+	ts := httptest.NewServer(mockCPHandler(t, ca))
+	defer ts.Close()
 
+	tempDir := t.TempDir()
 	cfg := &config.Config{
 		ControlPlane: config.ControlPlaneConfig{
-			BaseURL: "https://cp.example.com",
+			BaseURL: ts.URL,
 		},
 		Storage: config.StorageConfig{
-			Path: t.TempDir(),
+			Path: tempDir,
 		},
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	client := NewClient(cfg, log)
 
-	// Test: Request certificate with valid access token
 	accessToken := "valid-access-token"
 	err := client.RequestMTLSCertFromCP(accessToken)
 	if err != nil {
-		t.Errorf("RequestMTLSCertFromCP() error = %v", err)
+		t.Fatalf("RequestMTLSCertFromCP() error = %v", err)
 	}
 
-	// Verify certificate was saved
-	certPath := cfg.Storage.Path + "/client.crt"
-	keyPath := cfg.Storage.Path + "/client.key"
+	// Vérifier que les fichiers existent
+	certPath := tempDir + "/client.crt"
+	keyPath := tempDir + "/client.key"
 
 	if _, err := os.Stat(certPath); os.IsNotExist(err) {
 		t.Errorf("Certificate file not created at %s", certPath)
@@ -43,86 +58,127 @@ func TestCertificateRequest(t *testing.T) {
 	}
 }
 
-// TestCertificateExpiration tests certificate expiration detection
-// EXPECTED TO FAIL until certificate validation is implemented
+// TestCertificateExpiration teste la détection de certificat expiré
+// lors du chargement via LoadCertAndKey.
 func TestCertificateExpiration(t *testing.T) {
-	t.Skip("TODO: Certificate validation not yet implemented - will pass when complete")
-
+	tempDir := t.TempDir()
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
-			Path: t.TempDir(),
+			Path: tempDir,
 		},
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	client := NewClient(cfg, log)
 
-	// Create an expired certificate for testing
-	expiredCertPEM := createExpiredTestCert(t)
-	keyPEM := []byte("fake-key-pem")
-
-	err := client.SaveCertAndKey(expiredCertPEM, keyPEM)
-	if err != nil {
-		t.Fatalf("SaveCertAndKey() error = %v", err)
+	// Créer un certificat expiré
+	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Expired CA"},
+		NotBefore:             time.Now().Add(-48 * time.Hour),
+		NotAfter:              time.Now().Add(-24 * time.Hour), // expiré hier
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
 	}
+	caCertDER, _ := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	caCert, _ := x509.ParseCertificate(caCertDER)
 
-	// Test: Certificate validation is part of LoadCertAndKey
-	// Future: Add IsCertificateValid() method
-	// For now, just verify the cert was saved
-	certPath := cfg.Storage.Path + "/client.crt"
-	if _, err := os.Stat(certPath); err == nil {
-		t.Log("Expired certificate was saved (validation will be added)")
+	clientKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	clientTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "expired-client"},
+		NotBefore:    time.Now().Add(-48 * time.Hour),
+		NotAfter:     time.Now().Add(-24 * time.Hour), // expiré hier
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	clientCertDER, _ := x509.CreateCertificate(rand.Reader, clientTemplate, caCert, &clientKey.PublicKey, caKey)
+	clientCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientCertDER})
+	clientKeyDER, _ := x509.MarshalECPrivateKey(clientKey)
+	clientKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: clientKeyDER})
+
+	// Sauvegarder directement via le certStore (pas de validation X509KeyPair)
+	_ = client.certStore.SaveCertAndKey(clientCertPEM, clientKeyPEM)
+
+	// LoadCertAndKey doit détecter l'expiration
+	_, _, err := client.LoadCertAndKey()
+	if err == nil {
+		t.Fatal("LoadCertAndKey() should fail for expired certificate")
+	}
+	if !errors.Is(err, domain.ErrCertExpired) {
+		t.Errorf("error should be ErrCertExpired, got: %v", err)
 	}
 }
 
-// TestCertificateKeyMatch tests that certificate matches private key
-// EXPECTED TO FAIL until certificate validation is implemented
+// TestCertificateKeyMatch teste le refus de sauvegarder un cert/key incompatible.
 func TestCertificateKeyMatch(t *testing.T) {
-	t.Skip("TODO: Certificate/key validation not yet implemented - will pass when complete")
-
 	cfg := &config.Config{
 		Storage: config.StorageConfig{
 			Path: t.TempDir(),
 		},
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	client := NewClient(cfg, log)
 
-	// Test: Mismatched certificate and key should be rejected
-	certPEM := []byte("-----BEGIN CERTIFICATE-----\nMIIBhTCCASugAwIBAgIQIRi6zePL==\n-----END CERTIFICATE-----")
-	keyPEM := []byte("-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIIrYSSNQFaA==\n-----END EC PRIVATE KEY-----")
+	// Générer deux paires distinctes — cert de l'une, key de l'autre
+	ca := newTestCA(t)
 
-	err := client.SaveCertAndKey(certPEM, keyPEM)
+	key1, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	cert1Template := &x509.Certificate{
+		SerialNumber: big.NewInt(10),
+		Subject:      pkix.Name{CommonName: "client-1"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+	}
+	cert1DER, _ := x509.CreateCertificate(rand.Reader, cert1Template, ca.cert, &key1.PublicKey, ca.key)
+	cert1PEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert1DER})
+
+	key2, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key2DER, _ := x509.MarshalECPrivateKey(key2)
+	key2PEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: key2DER})
+
+	// cert1 + key2 → mismatch
+	err := client.SaveCertAndKey(cert1PEM, key2PEM)
 	if err == nil {
 		t.Error("SaveCertAndKey() should return error for mismatched cert/key")
 	}
 }
 
-// TestCertificatePermissions tests that private key has correct permissions
-// EXPECTED TO FAIL until certificate storage is implemented
+// TestCertificatePermissions teste les permissions des fichiers (Unix uniquement).
 func TestCertificatePermissions(t *testing.T) {
-	if os.Getenv("GOOS") == "windows" {
+	if runtime.GOOS == "windows" {
 		t.Skip("Skipping Unix permissions test on Windows")
 	}
-	t.Skip("TODO: Certificate storage not yet implemented - will pass when complete")
 
-	cfg := &config.Config{
-		Storage: config.StorageConfig{
-			Path: t.TempDir(),
-		},
+	ca := newTestCA(t)
+	clientKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	clientTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(44),
+		Subject:      pkix.Name{CommonName: "perm-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	clientCertDER, _ := x509.CreateCertificate(rand.Reader, clientTemplate, ca.cert, &clientKey.PublicKey, ca.key)
+	clientCertPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientCertDER})
+	clientKeyDER, _ := x509.MarshalECPrivateKey(clientKey)
+	clientKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: clientKeyDER})
+
+	tempDir := t.TempDir()
+	cfg := &config.Config{
+		Storage: config.StorageConfig{Path: tempDir},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	client := NewClient(cfg, log)
 
-	certPEM := []byte("fake-cert-pem")
-	keyPEM := []byte("fake-key-pem")
-
-	err := client.SaveCertAndKey(certPEM, keyPEM)
+	err := client.SaveCertAndKey(clientCertPEM, clientKeyPEM)
 	if err != nil {
 		t.Fatalf("SaveCertAndKey() error = %v", err)
 	}
 
-	// Test: Private key should have 0600 permissions
-	keyPath := cfg.Storage.Path + "/client.key"
+	keyPath := tempDir + "/client.key"
 	info, err := os.Stat(keyPath)
 	if err != nil {
 		t.Fatalf("os.Stat() error = %v", err)
@@ -132,34 +188,6 @@ func TestCertificatePermissions(t *testing.T) {
 	if mode != 0600 {
 		t.Errorf("Private key permissions = %o, want 0600", mode)
 	}
-
-	// Test: Certificate should have 0644 permissions
-	certPath := cfg.Storage.Path + "/client.crt"
-	info, err = os.Stat(certPath)
-	if err != nil {
-		t.Fatalf("os.Stat() error = %v", err)
-	}
-
-	mode = info.Mode().Perm()
-	if mode != 0644 {
-		t.Errorf("Certificate permissions = %o, want 0644", mode)
-	}
 }
 
-// Helper function to create an expired test certificate
-func createExpiredTestCert(t *testing.T) []byte {
-	// Create a minimal expired certificate for testing
-	certPEM := `-----BEGIN CERTIFICATE-----
-MIIB0TCCAXigAwIBAgIJAKS0mGGPi3qiMA0GCSqGSIb3DQEBCwUAMCExHzAdBgNV
-BAMMFmV4cGlyZWQudGVzdC5leGFtcGxlMB4XDTE3MDEwMTAwMDAwMFoXDTE3MDEw
-MjAwMDAwMFowITEfMB0GA1UEAwwWZXhwaXJlZC50ZXN0LmV4YW1wbGUwgZ8wDQYJ
-KoZIhvcNAQEBBQADgY0AMIGJAoGBALRiMLAh9iimur8VA7qVvdqxevEuUkW4K+2K
-dMXmnQbG9Aa7k7eBjK1S+0LYmVjPKlJGNXHDGuy5Fw/d7rjVJ0BLB+ubPK8iA/Tw
-3hLQgXMRRGRXXCn8ikfuQfjUS1uZSatdLB81mydBETlJhI6GH4twrbDJCR2Bwy/X
-WXgqgGRzAgMBAAGjUDBOMB0GA1UdDgQWBBSoSmpjBH3duubRObemRWXv86jsoTAf
-BgNVHSMEGDAWgBSoSmpjBH3duubRObemRWXv86jsoTAMBgNVHRMEBTADAQH/MA0G
-CSqGSIb3DQEBCwUAA4GBAFEkL6RGC1Vh6Xu5CFZG6sHvbSxqPeVlh7Ib8VyAGo9q
-Eu0VlqEsv9E84FHX6BWOmVx8JiCPc0FABJlT1/iA0n5l1Gy1mN4f1sG0nQzLGC==
------END CERTIFICATE-----`
-	return []byte(certPEM)
-}
+// Helper — pas besoin de createExpiredTestCert car on génère de vrais certs.

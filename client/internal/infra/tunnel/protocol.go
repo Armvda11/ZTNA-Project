@@ -14,10 +14,25 @@
 //
 //	[4 bytes : longueur du message JSON en big-endian uint32]
 //	[N bytes : message JSON]
-//
-// TODO: Finaliser le choix du protocole de framing
-// TODO: Ajouter un numéro de version du protocole dans le handshake
 package tunnel
+
+import (
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/url"
+	"strconv"
+	"strings"
+)
+
+// MaxMessageSize est la taille maximale d'un message JSON autorisée
+// sur le protocole tunnel (protection contre messages surdimensionnés).
+const MaxMessageSize = 1 << 20 // 1 Mo
+
+// CurrentProtocolVersion est la version courante du protocole tunnel.
+const CurrentProtocolVersion = 1
 
 // ConnectRequest est la requête envoyée par le client à la Gateway
 // pour demander l'accès à une ressource.
@@ -79,13 +94,81 @@ type ConnectResponse struct {
 	TTLSeconds int `json:"ttl_seconds,omitempty"`
 }
 
-// TODO: Implémenter les fonctions de sérialisation/désérialisation
-//       avec framing length-prefixed :
-//
-//   func WriteMessage(conn net.Conn, msg any) error
-//   func ReadMessage(conn net.Conn, dest any) error
-//
-// TODO: Ajouter une constante pour la taille maximale de message
-//       (protection contre les attaques par messages surdimensionnés)
-//
-// TODO: Ajouter un timeout de lecture pour éviter les blocages
+// WriteMessage sérialise msg en JSON et l'écrit sur conn avec un
+// préfixe de 4 octets (big-endian uint32) indiquant la taille du payload.
+func WriteMessage(conn net.Conn, msg any) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("impossible de sérialiser le message: %w", err)
+	}
+	if len(data) > MaxMessageSize {
+		return fmt.Errorf("message trop grand: %d octets (max %d)", len(data), MaxMessageSize)
+	}
+
+	var header [4]byte
+	binary.BigEndian.PutUint32(header[:], uint32(len(data)))
+	if _, err := conn.Write(header[:]); err != nil {
+		return fmt.Errorf("impossible d'écrire le header du message: %w", err)
+	}
+	if _, err := conn.Write(data); err != nil {
+		return fmt.Errorf("impossible d'écrire le payload du message: %w", err)
+	}
+	return nil
+}
+
+// ReadMessage lit un message length-prefixed depuis conn et le
+// désérialise dans dest.
+func ReadMessage(conn net.Conn, dest any) error {
+	var header [4]byte
+	if _, err := io.ReadFull(conn, header[:]); err != nil {
+		return fmt.Errorf("impossible de lire le header du message: %w", err)
+	}
+
+	size := binary.BigEndian.Uint32(header[:])
+	if size > MaxMessageSize {
+		return fmt.Errorf("message trop grand: %d octets (max %d)", size, MaxMessageSize)
+	}
+	if size == 0 {
+		return fmt.Errorf("message vide reçu")
+	}
+
+	buf := make([]byte, size)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		return fmt.Errorf("impossible de lire le payload du message: %w", err)
+	}
+
+	if err := json.Unmarshal(buf, dest); err != nil {
+		return fmt.Errorf("impossible de désérialiser le message: %w", err)
+	}
+	return nil
+}
+
+// ParseResource convertit une chaîne de type "ssh://host:port" ou "host:port"
+// en ResourceRef structuré.
+func ParseResource(resource string) ResourceRef {
+	// Format URI : "ssh://10.0.30.10:22"
+	if strings.Contains(resource, "://") {
+		u, err := url.Parse(resource)
+		if err == nil && u.Hostname() != "" {
+			port, _ := strconv.Atoi(u.Port())
+			return ResourceRef{
+				Type: u.Scheme,
+				Host: u.Hostname(),
+				Port: port,
+			}
+		}
+	}
+
+	// Format host:port : "10.0.30.10:22"
+	if host, portStr, err := net.SplitHostPort(resource); err == nil {
+		port, _ := strconv.Atoi(portStr)
+		return ResourceRef{
+			Type: "tcp",
+			Host: host,
+			Port: port,
+		}
+	}
+
+	// Nom logique seul : "backend-ssh"
+	return ResourceRef{Name: resource}
+}

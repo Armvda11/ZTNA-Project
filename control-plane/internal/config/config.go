@@ -78,15 +78,17 @@ func (c *Config) BusyTimeout() time.Duration {
 // -------------------- OIDC --------------------
 
 type OIDCConfig struct {
-	Issuer          string   `yaml:"issuer"`
-	Audience        string   `yaml:"audience"`
-	UsernameClaim   string   `yaml:"username_claim"`
-	GroupsClaim     string   `yaml:"groups_claim"`
-	AllowedAlgs     []string `yaml:"allowed_algs"`
-	JWKSCacheTTL    string   `yaml:"jwks_cache_ttl"`
-	AudienceMode    string   `yaml:"audience_mode"`
-	AdminGroup      string   `yaml:"admin_group"`
-	AllowHTTPIssuer bool     `yaml:"allow_http_issuer"` // lab-only: allow http:// issuer
+	Issuer             string   `yaml:"issuer"`
+	Audience           string   `yaml:"audience"`
+	UsernameClaim      string   `yaml:"username_claim"`
+	GroupsClaim        string   `yaml:"groups_claim"`
+	AllowedAlgs        []string `yaml:"allowed_algs"`
+	JWKSCacheTTL       string   `yaml:"jwks_cache_ttl"`
+	AudienceMode       string   `yaml:"audience_mode"`
+	AdminGroup         string   `yaml:"admin_group"`
+	AllowHTTPIssuer    bool     `yaml:"allow_http_issuer"`    // lab-only: allow http:// issuer
+	CAFile             string   `yaml:"ca_file"`              // custom CA for HTTPS JWKS (self-signed Keycloak)
+	InsecureSkipVerify bool     `yaml:"insecure_skip_verify"` // skip TLS verify for JWKS endpoint (lab-only)
 }
 
 // -------------------- PEP (gateway -> CP) auth --------------------
@@ -207,6 +209,12 @@ func (c *Config) Validate() error {
 	}
 	if c.OIDC.AudienceMode != "" && c.OIDC.AudienceMode != "aud" && c.OIDC.AudienceMode != "aud_or_azp" {
 		return fmt.Errorf("oidc.audience_mode must be aud or aud_or_azp")
+	}
+	// Validate ca_file is set when using HTTPS issuer with self-signed cert
+	if c.OIDC.CAFile != "" {
+		if _, err := os.Stat(c.OIDC.CAFile); err != nil {
+			return fmt.Errorf("oidc.ca_file %q not found: %w", c.OIDC.CAFile, err)
+		}
 	}
 
 	// --- database ---

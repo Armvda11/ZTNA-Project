@@ -73,6 +73,6 @@ func (s *CertFileStore) LoadCertAndKey() (certPEM, keyPEM []byte, err error) {
 		return nil, nil, fmt.Errorf("impossible de lire la clé privée: %w", err)
 	}
 
-	// TODO: valider la cohérence cert/clé et la date d'expiration certifiée.
+	// Validation cert/clé + expiration déléguée à credentials.Client.LoadCertAndKey()
 	return certPEM, keyPEM, nil
 }

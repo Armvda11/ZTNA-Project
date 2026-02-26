@@ -1,3 +1,11 @@
+# Configuration Control Plane — lab HTTP (fallback)
+#
+# ⚠️  Ce fichier utilise Keycloak en HTTP (port 8081).
+#     Utilisé uniquement quand KC_PROTO=http est passé aux scripts.
+#     La configuration par défaut (HTTPS) est dans config.lab.yaml.
+#
+# Usage : KC_PROTO=http make deploy-cp
+
 server:
   address: 0.0.0.0
   port: 8080
@@ -38,7 +46,7 @@ logging:
   format: json
 
 oidc:
-  issuer: "https://10.10.20.30:8443/realms/ztna"
+  issuer: "http://10.10.20.30:8081/realms/ztna"
   audience: "ztna-control-plane"
   username_claim: "preferred_username"
   groups_claim: "groups"
@@ -46,18 +54,23 @@ oidc:
   jwks_cache_ttl: "10m"
   audience_mode: "aud_or_azp"
   admin_group: "ztna-admins"
-  allow_http_issuer: false
-  ca_file: "./certs/ca.crt"  # CA pour vérifier Keycloak HTTPS
+  allow_http_issuer: true  # HTTP mode — lab fallback only
 
 pep:
-  auth_mode: mtls
+  auth_mode: token
   decision_ttl_seconds: 60
   require_registration: true
   revoked_pep_ids: []
-  # Token mode kept as explicit fallback for lab/troubleshooting only.
-  # auth_mode: token
-  # tokens:
-  #   ztna-gw-1: "CHANGE_ME_LONG_RANDOM"
+  tokens:
+    ztna-gw-01: "ztna-lab-pep-secret-2026"
+
+device_ca:
+  key_path: ./pki/device_ca.key
+  cert_path: ./pki/device_ca.crt
+  default_ttl: 168h
+  min_ttl: 1h
+  max_ttl: 720h
+  allowed_key_types: ["ecdsa-p256", "ed25519"]
 
 sshca:
   key_path: ./ssh_ca
@@ -65,6 +78,7 @@ sshca:
   min_ttl: 1m
   max_ttl: 1h
   allowed_principals:
+    - "ztna"
     - "${username}"
 
 policy:

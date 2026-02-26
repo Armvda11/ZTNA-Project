@@ -1,7 +1,7 @@
 // Package tls centralise la configuration TLS sortante du client.
 //
-// Ce fichier vise les appels HTTPS vers le Control Plane (cert issuance,
-// futures APIs de session/heartbeat).
+// Ce fichier fournit les clients HTTP sécurisés pour les appels HTTPS
+// vers le Control Plane et le fournisseur OIDC (Keycloak).
 package tls
 
 import (
@@ -29,6 +29,23 @@ func NewControlPlaneHTTPClient(cfg *config.Config) (*http.Client, error) {
 		return nil, err
 	}
 
+	return newHTTPClientWithTLS(tlsConfig), nil
+}
+
+// NewOIDCHTTPClient construit un client HTTP sécurisé pour joindre le
+// fournisseur OIDC (Keycloak). Il utilise la CA du provider OIDC
+// (oidc.ca_file) distincte de celle du Control Plane.
+func NewOIDCHTTPClient(cfg *config.Config) (*http.Client, error) {
+	tlsConfig, err := buildOIDCTLSConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return newHTTPClientWithTLS(tlsConfig), nil
+}
+
+// newHTTPClientWithTLS crée un http.Client avec la config TLS fournie.
+func newHTTPClientWithTLS(tlsConfig *tls.Config) *http.Client {
 	transport := &http.Transport{
 		TLSClientConfig:     tlsConfig,
 		TLSHandshakeTimeout: defaultTLSHandshakeTime,
@@ -44,32 +61,42 @@ func NewControlPlaneHTTPClient(cfg *config.Config) (*http.Client, error) {
 	return &http.Client{
 		Timeout:   defaultHTTPTimeout,
 		Transport: transport,
-	}, nil
+	}
 }
 
 func buildControlPlaneTLSConfig(cfg *config.Config) (*tls.Config, error) {
+	return buildTLSConfigFromCA(cfg.ControlPlane.CAFile, cfg.ControlPlane.Insecure)
+}
+
+func buildOIDCTLSConfig(cfg *config.Config) (*tls.Config, error) {
+	return buildTLSConfigFromCA(cfg.OIDC.CAFile, cfg.OIDC.Insecure)
+}
+
+// buildTLSConfigFromCA construit une tls.Config TLS 1.3 avec une CA custom
+// optionnelle et un flag insecure pour les environnements de lab.
+func buildTLSConfigFromCA(caFile string, insecure bool) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
 		MinVersion:         tls.VersionTLS13,
-		InsecureSkipVerify: cfg.ControlPlane.Insecure,
+		InsecureSkipVerify: insecure,
 	}
 
-	if cfg.ControlPlane.CAFile == "" {
+	if caFile == "" {
 		return tlsConfig, nil
 	}
 
-	caData, err := os.ReadFile(cfg.ControlPlane.CAFile)
+	caData, err := os.ReadFile(caFile)
 	if err != nil {
-		return nil, fmt.Errorf("impossible de lire control_plane.ca_file: %w", err)
+		return nil, fmt.Errorf("impossible de lire ca_file %s: %w", caFile, err)
 	}
 
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caData) {
-		return nil, fmt.Errorf("control_plane.ca_file invalide (PEM)")
+		return nil, fmt.Errorf("ca_file invalide (PEM): %s", caFile)
 	}
 
 	tlsConfig.RootCAs = pool
 
 	// TODO: Ajouter le pinning cert/public key optionnel pour durcir
-	// les échanges client->control-plane dans les environnements sensibles.
+	// les échanges dans les environnements sensibles.
 	return tlsConfig, nil
 }

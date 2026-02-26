@@ -2,121 +2,36 @@ package app
 
 import (
 	"context"
+	"errors"
+	"io"
 	"log/slog"
-	"os"
 	"testing"
 
 	"client/internal/config"
+	"client/internal/core/domain"
 )
 
-// TestCompleteLoginWorkflow tests the end-to-end login workflow
-// EXPECTED TO FAIL until login implementation is complete
+// TestCompleteLoginWorkflow tests the end-to-end login workflow.
+// Requires a live OIDC server — skipped for unit tests.
 func TestCompleteLoginWorkflow(t *testing.T) {
-	t.Skip("TODO: Login workflow not yet implemented - will pass when complete")
-
-	ctx := context.Background()
-	cfg := &config.Config{
-		OIDC: config.OIDCConfig{
-			Issuer:   "https://auth.example.com",
-			ClientID: "test-client",
-		},
-		Storage: config.StorageConfig{
-			Path: t.TempDir(),
-		},
-	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	app, _ := New(ctx, cfg, log)
-
-	// Test: Complete login flow
-	err := app.RunLogin(ctx)
-	if err != nil {
-		t.Errorf("RunLogin() error = %v", err)
-	}
-
-	// Verify tokens were stored
-	token, err := app.oidc.GetValidAccessToken(ctx)
-	if err != nil {
-		t.Errorf("GetValidAccessToken() error = %v", err)
-	}
-	if token == "" {
-		t.Error("Login should store access token")
-	}
+	t.Skip("Requires live OIDC server (integration test)")
 }
 
-// TestCompleteCertWorkflow tests the end-to-end certificate request workflow
-// EXPECTED TO FAIL until certificate workflow is complete
+// TestCompleteCertWorkflow tests the end-to-end certificate request workflow.
+// Requires live OIDC server + Control Plane — skipped for unit tests.
 func TestCompleteCertWorkflow(t *testing.T) {
-	t.Skip("TODO: Certificate workflow not yet implemented - will pass when complete")
-
-	ctx := context.Background()
-	cfg := &config.Config{
-		OIDC: config.OIDCConfig{
-			Issuer:   "https://auth.example.com",
-			ClientID: "test-client",
-		},
-		ControlPlane: config.ControlPlaneConfig{
-			BaseURL: "https://cp.example.com",
-		},
-		Storage: config.StorageConfig{
-			Path: t.TempDir(),
-		},
-	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	app, _ := New(ctx, cfg, log)
-
-	// Prerequisites: Must be logged in first
-	// (In real test, would mock token storage)
-
-	// Test: Complete certificate request flow
-	err := app.RunCert(ctx)
-	if err != nil {
-		t.Errorf("RunCert() error = %v", err)
-	}
-
-	// Verify certificate was saved
-	certPath := cfg.Storage.Path + "/client.crt"
-	if _, err := os.Stat(certPath); os.IsNotExist(err) {
-		t.Error("Certificate should be saved after RunCert()")
-	}
+	t.Skip("Requires live OIDC + CP servers (integration test)")
 }
 
-// TestCompleteConnectWorkflow tests the end-to-end connection workflow
-// EXPECTED TO FAIL until connect workflow is complete
+// TestCompleteConnectWorkflow tests the end-to-end connection workflow.
+// Requires live Gateway — skipped for unit tests.
 func TestCompleteConnectWorkflow(t *testing.T) {
-	t.Skip("TODO: Connect workflow not yet implemented - will pass when complete")
-
-	ctx := context.Background()
-	cfg := &config.Config{
-		OIDC: config.OIDCConfig{
-			Issuer:   "https://auth.example.com",
-			ClientID: "test-client",
-		},
-		Gateway: config.GatewayConfig{
-			Address: "gateway.example.com:9443",
-		},
-		Storage: config.StorageConfig{
-			Path: t.TempDir(),
-		},
-	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	app, _ := New(ctx, cfg, log)
-
-	// Prerequisites: Must have valid cert and token
-	// (In real test, would mock certificate and token storage)
-
-	// Test: Complete connect workflow
-	resource := "ssh://backend-server:22"
-	err := app.RunConnect(ctx, resource)
-	if err != nil {
-		t.Errorf("RunConnect() error = %v", err)
-	}
+	t.Skip("Requires live Gateway (integration test)")
 }
 
-// TestWorkflowWithExpiredToken tests handling of expired tokens
-// EXPECTED TO FAIL until token refresh is implemented
+// TestWorkflowWithExpiredToken tests RunCert without valid tokens.
+// Without stored tokens, GetValidAccessToken fails → RunCert returns ErrNotAuthenticated.
 func TestWorkflowWithExpiredToken(t *testing.T) {
-	t.Skip("TODO: Token expiration handling not yet implemented - will pass when complete")
-
 	ctx := context.Background()
 	cfg := &config.Config{
 		OIDC: config.OIDCConfig{
@@ -127,54 +42,30 @@ func TestWorkflowWithExpiredToken(t *testing.T) {
 			Path: t.TempDir(),
 		},
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	app, _ := New(ctx, cfg, log)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	app, err := New(ctx, cfg, log)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
 
-	// Simulate expired token in storage
-	// Future: Add token storage helper methods
-	// For now, just test that RunCert checks authentication
-	err := app.RunCert(ctx)
+	err = app.RunCert(ctx)
 	if err == nil {
-		t.Error("RunCert() should fail when not authenticated")
+		t.Fatal("RunCert() should fail when not authenticated")
+	}
+	if !errors.Is(err, domain.ErrNotAuthenticated) {
+		t.Errorf("error should wrap ErrNotAuthenticated, got: %v", err)
 	}
 }
 
-// TestWorkflowWithExpiredCertificate tests handling of expired certificates
-// EXPECTED TO FAIL until certificate renewal is implemented
+// TestWorkflowWithExpiredCertificate tests RunConnect with no certificate.
+// Skipped: connect usecase loads cert internally — needs mock infra.
 func TestWorkflowWithExpiredCertificate(t *testing.T) {
-	t.Skip("TODO: Certificate renewal not yet implemented - will pass when complete")
-
-	ctx := context.Background()
-	cfg := &config.Config{
-		Gateway: config.GatewayConfig{
-			Address: "gateway.example.com:9443",
-		},
-		Storage: config.StorageConfig{
-			Path: t.TempDir(),
-		},
-	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	app, _ := New(ctx, cfg, log)
-
-	// Simulate expired certificate in storage
-	// (Would need to create actual expired cert PEM)
-
-	// Test: Should detect expired cert and request new one
-	resource := "ssh://backend:22"
-	err := app.RunConnect(ctx, resource)
-
-	// Should fail with clear message about expired cert
-	if err == nil {
-		t.Error("RunConnect() should detect expired certificate")
-	}
-	// Error message should guide user to run 'ztna cert'
+	t.Skip("Requires mock certificate storage + gateway (integration test)")
 }
 
-// TestWorkflowNotAuthenticated tests handling when user is not authenticated
-// EXPECTED TO FAIL until authentication check is implemented
+// TestWorkflowNotAuthenticated tests RunCert without prior login.
+// Empty token store → ErrNotAuthenticated.
 func TestWorkflowNotAuthenticated(t *testing.T) {
-	t.Skip("TODO: Authentication check not yet implemented - will pass when complete")
-
 	ctx := context.Background()
 	cfg := &config.Config{
 		ControlPlane: config.ControlPlaneConfig{
@@ -184,13 +75,17 @@ func TestWorkflowNotAuthenticated(t *testing.T) {
 			Path: t.TempDir(),
 		},
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	app, _ := New(ctx, cfg, log)
-
-	// Test: RunCert without login should fail
-	err := app.RunCert(ctx)
-	if err == nil {
-		t.Error("RunCert() should fail when not authenticated")
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	app, err := New(ctx, cfg, log)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
 	}
-	// Should return ErrNotAuthenticated
+
+	err = app.RunCert(ctx)
+	if err == nil {
+		t.Fatal("RunCert() should fail when not authenticated")
+	}
+	if !errors.Is(err, domain.ErrNotAuthenticated) {
+		t.Errorf("error should wrap ErrNotAuthenticated, got: %v", err)
+	}
 }

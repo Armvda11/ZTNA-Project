@@ -28,6 +28,8 @@ type OIDCConfig struct {
 	ClientID     string `yaml:"client_id"`
 	ClientSecret string `yaml:"client_secret"` // Lab uniquement ; en prod utiliser PKCE
 	Audience     string `yaml:"audience"`
+	CAFile       string `yaml:"ca_file"`              // CA de confiance pour le provider OIDC (HTTPS)
+	Insecure     bool   `yaml:"insecure_skip_verify"` // Lab uniquement — skip la vérification du certificat TLS
 }
 
 // ControlPlaneConfig contient les paramètres de connexion au Control Plane.
@@ -119,7 +121,7 @@ func (c *Config) Validate() error {
 	// Valider que l'issuer est HTTPS sauf si insecure_allow_http_oidc est activé
 	if !c.Security.InsecureAllowHTTPOIDC {
 		if len(c.OIDC.Issuer) >= 7 && c.OIDC.Issuer[:7] == "http://" {
-			return fmt.Errorf("oidc.issuer doit être HTTPS en production (utilisez security.insecure_allow_http_oidc: true en lab)")
+			return fmt.Errorf("oidc.issuer doit être HTTPS (utilisez security.insecure_allow_http_oidc: true pour forcer HTTP, ou configurez oidc.ca_file pour HTTPS avec CA custom)")
 		}
 	}
 

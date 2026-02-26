@@ -6,7 +6,12 @@ set -euo pipefail
 CP_HOST="10.10.20.30"
 CP_PORT="8080"
 KC_HOST="10.10.20.30"
-KC_PORT="8081"
+KC_PROTO="${KC_PROTO:-https}"  # https (default) or http (legacy fallback)
+if [[ "${KC_PROTO}" == "https" ]]; then
+  KC_PORT="8443"
+else
+  KC_PORT="8081"
+fi
 PEP_TOKEN="CHANGE_ME_LONG_RANDOM"
 TIMEOUT=10
 
@@ -71,7 +76,7 @@ echo ""
 echo -e "${YELLOW}[3] Keycloak Availability${NC}"
 echo "────────────────────────────────────────"
 test_endpoint "Keycloak realm endpoint" \
-    "curl -sSfk --max-time $TIMEOUT http://$KC_HOST:$KC_PORT/realms/ztna/.well-known/openid-configuration" \
+    "curl -sSfk --max-time $TIMEOUT ${KC_PROTO}://$KC_HOST:$KC_PORT/realms/ztna/.well-known/openid-configuration" \
     "issuer"
 echo ""
 
@@ -79,7 +84,7 @@ echo ""
 echo -e "${YELLOW}[4] OIDC Token Acquisition${NC}"
 echo "────────────────────────────────────────"
 TOKEN_CMD='curl -sSfk --max-time '"$TIMEOUT"' -X POST \
-  http://'"$KC_HOST"':'"$KC_PORT"'/realms/ztna/protocol/openid-connect/token \
+  '"$KC_PROTO"'://'"$KC_HOST"':'"$KC_PORT"'/realms/ztna/protocol/openid-connect/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client_id=ztna-control-plane" \
   -d "client_secret=demo-secret" \

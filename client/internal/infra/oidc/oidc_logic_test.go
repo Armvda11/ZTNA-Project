@@ -2,7 +2,11 @@ package oidc
 
 import (
 	"context"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -10,107 +14,122 @@ import (
 	"client/internal/config"
 )
 
-// TestLoginFlow tests the complete OIDC login workflow
-// EXPECTED TO FAIL until OIDC implementation is complete
+// TestLoginFlow teste le workflow complet de login OIDC avec un mock server.
 func TestLoginFlow(t *testing.T) {
-	t.Skip("TODO: OIDC login flow not yet implemented - will pass when complete")
+	tempDir := t.TempDir()
 
-	ctx := context.Background()
+	var captured url.Values
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		captured, _ = url.ParseQuery(string(body))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"flow-acc","refresh_token":"flow-ref","token_type":"Bearer","expires_in":300}`))
+	}))
+	defer ts.Close()
+
 	cfg := &config.Config{
 		OIDC: config.OIDCConfig{
-			Issuer:   "https://auth.example.com",
+			Issuer:   ts.URL + "/realms/ztna",
 			ClientID: "test-client",
 		},
+		Storage: config.StorageConfig{Path: tempDir},
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	client := NewClient(cfg, log)
 
-	// Test: Complete login flow should return tokens
-	tokenSet, err := client.LoginPasswordGrantLAB(ctx, "test-user", "test-password")
+	tokenSet, err := client.LoginPasswordGrantLAB(context.Background(), "test-user", "test-password")
 	if err != nil {
-		t.Errorf("LoginPasswordGrantLAB() error = %v", err)
+		t.Fatalf("LoginPasswordGrantLAB() error = %v", err)
 	}
-
-	// Verify token was stored
 	if tokenSet == nil {
-		t.Error("LoginPasswordGrantLAB() returned nil tokenSet")
+		t.Fatal("LoginPasswordGrantLAB() returned nil tokenSet")
 	}
-	if tokenSet != nil && tokenSet.AccessToken == "" {
+	if tokenSet.AccessToken == "" {
 		t.Error("TokenSet has empty AccessToken")
+	}
+	if captured.Get("grant_type") != "password" {
+		t.Errorf("grant_type=%q, want password", captured.Get("grant_type"))
+	}
+	if captured.Get("username") != "test-user" {
+		t.Errorf("username=%q, want test-user", captured.Get("username"))
 	}
 }
 
-// TestTokenRefresh tests the token refresh workflow
-// EXPECTED TO FAIL until token refresh is implemented
+// TestTokenRefresh teste le workflow de rafraîchissement de token avec mock.
 func TestTokenRefresh(t *testing.T) {
-	t.Skip("TODO: Token refresh not yet implemented - will pass when complete")
+	tempDir := t.TempDir()
 
-	ctx := context.Background()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"new-refreshed","refresh_token":"new-ref","token_type":"Bearer","expires_in":300}`))
+	}))
+	defer ts.Close()
+
 	cfg := &config.Config{
 		OIDC: config.OIDCConfig{
-			Issuer:   "https://auth.example.com",
+			Issuer:   ts.URL + "/realms/ztna",
 			ClientID: "test-client",
 		},
+		Storage: config.StorageConfig{Path: tempDir},
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	client := NewClient(cfg, log)
 
-	// Test: Should refresh expired token using refresh_token
-	oldToken := "expired-access-token"
+	// Stocker un token expiré avec un refresh_token
+	_ = client.store.Save(&TokenSet{
+		AccessToken:  "expired-access-token",
+		RefreshToken: "initial-refresh-token",
+		TokenType:    "Bearer",
+		ExpiresAt:    time.Now().Add(-10 * time.Minute),
+	})
 
-	newTokenSet, err := client.RefreshAccessToken(ctx)
+	newTokenSet, err := client.RefreshAccessToken(context.Background())
 	if err != nil {
-		t.Errorf("RefreshAccessToken() error = %v", err)
+		t.Fatalf("RefreshAccessToken() error = %v", err)
 	}
 	if newTokenSet == nil {
-		t.Error("RefreshAccessToken() returned nil tokenSet")
+		t.Fatal("RefreshAccessToken() returned nil tokenSet")
 	}
-	if newTokenSet != nil && newTokenSet.AccessToken == "" {
+	if newTokenSet.AccessToken == "" {
 		t.Error("RefreshAccessToken() returned empty token")
 	}
-	if newTokenSet != nil && newTokenSet.AccessToken == oldToken {
+	if newTokenSet.AccessToken == "expired-access-token" {
 		t.Error("RefreshAccessToken() should return new token, not old token")
 	}
 }
 
-// TestTokenValidation tests token expiration checking
-// EXPECTED TO FAIL until token validation is implemented
+// TestTokenValidation teste la détection de token absent.
 func TestTokenValidation(t *testing.T) {
-	t.Skip("TODO: Token validation not yet implemented - will pass when complete")
-
 	cfg := &config.Config{
 		OIDC: config.OIDCConfig{
 			Issuer:   "https://auth.example.com",
 			ClientID: "test-client",
 		},
+		Storage: config.StorageConfig{Path: t.TempDir()},
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	client := NewClient(cfg, log)
 
 	ctx := context.Background()
 
-	// Test: Should detect expired token
 	token, err := client.GetValidAccessToken(ctx)
 	if err == nil {
-		t.Logf("GetValidAccessToken() should fail when no tokens stored")
+		t.Log("GetValidAccessToken() devrait échouer sans tokens stockés")
 	}
 	if token != "" {
 		t.Error("GetValidAccessToken() should return empty token when not authenticated")
 	}
 }
 
-// TestTokenStorage tests token persistence
-// EXPECTED TO FAIL until token storage is implemented
+// TestTokenStorage teste la persistance des tokens (Save/Load).
 func TestTokenStorage(t *testing.T) {
-	t.Skip("TODO: Token storage not yet implemented - will pass when complete")
-
 	cfg := &config.Config{
 		OIDC: config.OIDCConfig{
 			Issuer:   "https://auth.example.com",
 			ClientID: "test-client",
 		},
 		Storage: config.StorageConfig{
-			Path: t.TempDir(), // Use temp directory for test
+			Path: t.TempDir(),
 		},
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -123,13 +142,11 @@ func TestTokenStorage(t *testing.T) {
 		ExpiresAt:    time.Now().Add(1 * time.Hour),
 	}
 
-	// Test: Save tokens
 	err := client.store.Save(testTokenSet)
 	if err != nil {
 		t.Fatalf("store.Save() error = %v", err)
 	}
 
-	// Test: Load tokens
 	loadedTokenSet, err := client.store.Load()
 	if err != nil {
 		t.Fatalf("store.Load() error = %v", err)

@@ -1,3 +1,13 @@
+# Keycloak expose les deux modes simultanément :
+#   - HTTP  : port 8081 (lab/debug, scripts legacy)
+#   - HTTPS : port 8443 (cible, requiert certs dans ./certs/keycloak.*)
+#
+# Pour basculer les scripts/clients vers HTTPS :
+#   export KC_PROTO=https   (défaut dans les scripts = http)
+#
+# Si les certificats Keycloak n'existent pas encore, lancer :
+#   ./scripts/gen-keycloak-cert.sh
+
 services:
   keycloak:
     image: quay.io/keycloak/keycloak:21.0.0
@@ -5,10 +15,18 @@ services:
       - start-dev
       - --import-realm
       - --http-port=8081
+      - --https-port=8443
+      - --https-certificate-file=/opt/keycloak/certs/keycloak.crt
+      - --https-certificate-key-file=/opt/keycloak/certs/keycloak.key
+      - --hostname-strict=false
+      - --hostname-strict-https=false
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin123
     ports:
       - "8081:8081"
+      - "8443:8443"
     volumes:
       - ./realm-ztna.json:/opt/keycloak/data/import/realm-ztna.json:ro
+      - ./certs/keycloak.crt:/opt/keycloak/certs/keycloak.crt:ro
+      - ./certs/keycloak.key:/opt/keycloak/certs/keycloak.key:ro
