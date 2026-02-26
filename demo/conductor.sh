@@ -81,15 +81,13 @@ declare -A STEP_NAMES=(
 show_progress_bar() {
     local current=$1
     local total=$2
-    local bar_width=40
+    local bar_width=38
     local filled=$(( current * bar_width / total ))
     local empty=$(( bar_width - filled ))
-    printf "${GREEN}"
-    printf '%*s' "$filled" | tr ' ' '█'
-    printf "${DIM}"
-    printf '%*s' "$empty"  | tr ' ' '░'
-    printf "${NC}"
-    printf " %d/%d\n" "$current" "$total"
+    local bar_filled="" bar_empty=""
+    for ((i=0; i<filled; i++)); do bar_filled+="█"; done
+    for ((i=0; i<empty;  i++)); do bar_empty+="░";  done
+    printf "\033[0;32m%s\033[2m%s\033[0m %d/%d\n" "$bar_filled" "$bar_empty" "$current" "$total"
 }
 
 # ─── is_skipped ───────────────────────────────────────────────────────────────

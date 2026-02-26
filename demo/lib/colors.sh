@@ -66,6 +66,19 @@ print_separator() {
     echo -e "${DIM}─────────────────────────────────────────────────────────────${NC}"
 }
 
+# print_cmd CMD — affiche la commande avant de l'exécuter (pour la démo)
+print_cmd() {
+    echo -e ""
+    echo -e "  ${DIM}\$${NC} ${CYAN}$*${NC}"
+    echo -e ""
+}
+
+# run_cmd CMD [ARGS...] — affiche + exécute
+run_cmd() {
+    print_cmd "$*"
+    "$@"
+}
+
 # Affiche une paire clé/valeur joliment
 print_kv() {
     local key="$1"

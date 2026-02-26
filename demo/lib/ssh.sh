@@ -4,7 +4,7 @@
 # =============================================================================
 
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
-SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -i ${SSH_KEY}"
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o LogLevel=QUIET -i ${SSH_KEY}"
 
 # IP des VMs (peut être surchargé via variables d'environnement)
 CP_IP="${CP_IP:-10.10.20.30}"

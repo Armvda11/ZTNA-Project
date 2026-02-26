@@ -196,22 +196,14 @@ echo -e "${CYAN}  [1/5]${NC} Logs Control Plane…"
 open_terminal \
     "Control Plane — logs" \
     "${GEO_CP_LOGS}" \
-    "echo -e '\033[0;35m\033[1m[ CONTROL PLANE — Logs en temps réel ]\033[0m'; \
-     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${SSH_KEY} ztna@${CP_IP} \
-       'sudo journalctl -u ztna-cp -f --no-pager -o short-iso 2>/dev/null || \
-        sudo journalctl -u ztna-cp -f --no-pager 2>/dev/null || \
-        echo \"Service ztna-cp introuvable\"'"
+    "source '${DEMO_DIR}/lib/logfmt.sh'; stream_cp_logs"
 
 # 2. Logs Gateway
 echo -e "${CYAN}  [2/5]${NC} Logs Gateway…"
 open_terminal \
     "Gateway — logs" \
     "${GEO_GW_LOGS}" \
-    "echo -e '\033[0;34m\033[1m[ GATEWAY — Logs en temps réel ]\033[0m'; \
-     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${SSH_KEY} ztna@${GW_IP} \
-       'sudo journalctl -u ztna-gateway -f --no-pager -o short-iso 2>/dev/null || \
-        sudo journalctl -u ztna-gateway -f --no-pager 2>/dev/null || \
-        echo \"Service ztna-gateway introuvable\"'"
+    "source '${DEMO_DIR}/lib/logfmt.sh'; stream_gw_logs"
 
 # 3. Terminal wan-client (SSH interactif)
 echo -e "${CYAN}  [3/5]${NC} Terminal wan-client…"
@@ -220,7 +212,7 @@ open_terminal \
     "${GEO_CLIENT}" \
     "echo -e '\033[0;33m\033[1m[ WAN-CLIENT — Terminal SSH interactif ]\033[0m'; \
      echo -e '\033[2mConnexion SSH vers wan-client (${CLIENT_IP})...\033[0m'; \
-     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ${SSH_KEY} ztna@${CLIENT_IP}"
+     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=QUIET -i ${SSH_KEY} ztna@${CLIENT_IP}"
 
 # 4. Panneau narrateur (si activé)
 if $SHOW_NARRATOR; then

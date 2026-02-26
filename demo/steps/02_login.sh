@@ -22,8 +22,9 @@ print_kv "Protocole"     "OpenID Connect — Resource Owner Password Grant (lab)
 print_kv "Algorithme"    "RS256 (Keycloak)"
 echo -e ""
 
-echo -e "${INFO}Exécution du login OIDC sur wan-client…${NC}"
+echo -e "${CYAN}Exécution du login OIDC sur wan-client…${NC}"
 print_separator
+print_cmd "curl -sk -d grant_type=password -d client_id=${ZTNA_CLIENT_ID} -d username=${ZTNA_USER} \\\n    \"${KC_URL}/realms/${ZTNA_REALM}/protocol/openid-connect/token\""
 
 ssh_client bash <<ENDSSH
 set -e
