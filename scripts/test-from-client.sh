@@ -8,7 +8,12 @@ set -euo pipefail
 CP_HOST="10.10.20.30"
 CP_PORT="8080"
 KC_HOST="10.10.20.30"
-KC_PORT="8081"
+KC_PROTO="${KC_PROTO:-https}"  # https (default) or http (legacy fallback)
+if [[ "${KC_PROTO}" == "https" ]]; then
+  KC_PORT="8443"
+else
+  KC_PORT="8081"
+fi
 TIMEOUT=15
 
 # Couleurs
@@ -84,7 +89,7 @@ echo "────────────────────────�
 echo "Authenticating as user 'alice' via Keycloak..."
 
 TOKEN_RESPONSE=$(timeout $TIMEOUT curl -sSfk --max-time 10 -X POST \
-  http://$KC_HOST:$KC_PORT/realms/ztna/protocol/openid-connect/token \
+  ${KC_PROTO}://$KC_HOST:$KC_PORT/realms/ztna/protocol/openid-connect/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client_id=ztna-control-plane" \
   -d "client_secret=demo-secret" \
@@ -208,7 +213,7 @@ echo "  wan-client (10.10.10.10)"
 echo "      ↓ HTTPS request"
 echo "  ztna-cp (10.10.20.30:8080)"
 echo "      ↓ OIDC validation"
-echo "  Keycloak (10.10.20.30:8081)"
+echo "  Keycloak (10.10.20.30:$KC_PORT)"
 echo "      ↓ JWT token"
 echo "  Control Plane Auth ✓"
 echo "      ↓ SSH Cert"

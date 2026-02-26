@@ -3,8 +3,16 @@ set -euo pipefail
 
 CURL_OPTS="-sSfk --max-time 15"
 
+# Keycloak mode: http (default/legacy) or https
+KC_PROTO="${KC_PROTO:-https}"  # https (default) or http (legacy fallback)
+if [[ "${KC_PROTO}" == "https" ]]; then
+  KC_BASE="https://10.10.20.30:8443"
+else
+  KC_BASE="http://10.10.20.30:8081"
+fi
+
 echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║           ZTNA LAB - COMPLETE DIAGNOSTIC TEST                  ║"
+echo "║           ZTNA LAB - COMPLETE DIAGNOSTIC TEST (KC=${KC_PROTO})    ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
 
@@ -43,8 +51,8 @@ echo ""
 # Test 3: Keycloak token endpoint
 echo "[3/7] KEYCLOAK - TOKEN ENDPOINT"
 echo "======================================"
-TOKEN=$(curl -sS -X POST \
-  http://10.10.20.30:8081/realms/ztna/protocol/openid-connect/token \
+TOKEN=$(curl -sSk -X POST \
+  ${KC_BASE}/realms/ztna/protocol/openid-connect/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client_id=ztna-control-plane" \
   -d "client_secret=demo-secret" \
@@ -58,8 +66,8 @@ if [ -n "$TOKEN" ] && [ ${#TOKEN} -gt 100 ]; then
   echo "   Preview: ${TOKEN:0:50}..."
 else
   echo "❌ FAIL: Token endpoint failed"
-  TOKEN_RESPONSE=$(curl -s -X POST \
-    http://10.10.20.30:8081/realms/ztna/protocol/openid-connect/token \
+  TOKEN_RESPONSE=$(curl -sk -X POST \
+    ${KC_BASE}/realms/ztna/protocol/openid-connect/token \
     -H "Content-Type: application/x-www-form-urlencoded" \
     -d "client_id=ztna-control-plane" \
     -d "client_secret=demo-secret" \

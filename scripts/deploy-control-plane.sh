@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # Déploiement SIMPLE du control-plane + Keycloak sur ztna-cp
 # Architecture: PC → SSH direct vers DMZ (NAT)
+#
+# Keycloak Mode (variable KC_PROTO) :
+#   Par défaut : HTTPS (port 8443) — certificats générés automatiquement
+#   Fallback  : KC_PROTO=http ./scripts/deploy-control-plane.sh
+#
+# Fichiers de configuration :
+#   HTTPS : config.lab.yaml       (défaut)
+#   HTTP  : config.lab-http.yaml  (fallback)
 
 set -euo pipefail
 
@@ -9,6 +17,7 @@ CP_DIR="${ROOT_DIR}/control-plane"
 TARGET_HOST="10.10.20.30"
 TARGET_USER="ztna"
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10"
+KC_PROTO="${KC_PROTO:-https}"  # https (default) or http (legacy fallback)
 
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 
@@ -31,6 +40,24 @@ if [[ ! -f "${CP_DIR}/certs/ca.crt" ]]; then
     openssl req -new -key pep.key -subj "/CN=ztna-gw-01" -out pep.csr 2>/dev/null && \
     openssl x509 -req -in pep.csr -CA ca.crt -CAkey ca.key -CAcreateserial -out pep.crt -days 365 -sha256 2>/dev/null)
   log "✓ Certificats générés"
+fi
+
+# 2b. Générer le certificat TLS Keycloak si nécessaire
+# Toujours généré car Docker expose les deux ports (8081+8443) ; les certs
+# doivent exister même en mode HTTP pour que le conteneur démarre.
+if [[ ! -f "${CP_DIR}/keycloak/certs/keycloak.crt" ]]; then
+  log "Génération du certificat TLS Keycloak..."
+  "${ROOT_DIR}/scripts/gen-keycloak-cert.sh" "${TARGET_HOST}"
+  log "✓ Certificat Keycloak généré"
+fi
+
+# 2c. Sélection du fichier de configuration selon le mode Keycloak
+if [[ "${KC_PROTO}" == "http" ]]; then
+  CP_CONFIG="config.lab-http.yaml"
+  log "Mode Keycloak: HTTP (fallback) → ${CP_CONFIG}"
+else
+  CP_CONFIG="config.lab.yaml"
+  log "Mode Keycloak: HTTPS (défaut) → ${CP_CONFIG}"
 fi
 
 # 3. Attendre que ztna-cp soit accessible
@@ -63,7 +90,7 @@ tar -czf /tmp/ztna-deploy.tar.gz -C "${ROOT_DIR}" \
   control-plane/cp-linux-amd64 \
   control-plane/keycloak \
   control-plane/certs \
-  control-plane/config.lab.yaml \
+  "control-plane/${CP_CONFIG}" \
   control-plane/policies.yaml
 
 scp ${SSH_OPTS} /tmp/ztna-deploy.tar.gz ${TARGET_USER}@${TARGET_HOST}:/tmp/
@@ -78,7 +105,7 @@ log "✓ Keycloak démarré"
 
 # 7. Créer et démarrer le service control-plane
 log "Configuration du service control-plane..."
-ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "sudo tee /etc/systemd/system/ztna-cp.service >/dev/null" <<'EOF'
+ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "sudo tee /etc/systemd/system/ztna-cp.service >/dev/null" <<EOF
 [Unit]
 Description=ZTNA Control Plane
 After=network.target docker.service
@@ -87,7 +114,7 @@ After=network.target docker.service
 Type=simple
 User=ztna
 WorkingDirectory=/home/ztna/ztna/control-plane
-ExecStart=/home/ztna/ztna/control-plane/cp-linux-amd64 -config /home/ztna/ztna/control-plane/config.lab.yaml
+ExecStart=/home/ztna/ztna/control-plane/cp-linux-amd64 -config /home/ztna/ztna/control-plane/${CP_CONFIG}
 Restart=on-failure
 RestartSec=5
 
@@ -100,9 +127,17 @@ sleep 3
 log "✓ Control-plane démarré"
 
 # 8. Tests de santé
-log "Vérification des services..."
-if curl -sf "http://${TARGET_HOST}:8081/realms/ztna" >/dev/null 2>&1; then
-  log "✓ Keycloak: http://${TARGET_HOST}:8081"
+log "Vérification des services (mode Keycloak: ${KC_PROTO})..."
+if [[ "${KC_PROTO}" == "https" ]]; then
+  KC_CHECK_URL="https://${TARGET_HOST}:8443/realms/ztna"
+  KC_DISPLAY="https://${TARGET_HOST}:8443"
+else
+  KC_CHECK_URL="http://${TARGET_HOST}:8081/realms/ztna"
+  KC_DISPLAY="http://${TARGET_HOST}:8081"
+fi
+
+if curl -sfk "${KC_CHECK_URL}" >/dev/null 2>&1; then
+  log "✓ Keycloak: ${KC_DISPLAY}"
 else
   log "⚠ Keycloak pas encore prêt (attendre 30s)"
 fi
@@ -115,6 +150,11 @@ fi
 
 log ""
 log "=== Déploiement terminé ==="
-log "Keycloak:       http://${TARGET_HOST}:8081  (admin/admin)"
+log "Keycloak:       ${KC_DISPLAY}  (admin/admin)"
 log "Control-plane:  https://${TARGET_HOST}:8080"
 log "SSH:            ssh ${TARGET_USER}@${TARGET_HOST}"
+log ""
+log "Mode Keycloak: ${KC_PROTO}"
+if [[ "${KC_PROTO}" == "http" ]]; then
+  log "  → Pour passer en HTTPS (défaut): unset KC_PROTO && $0"
+fi

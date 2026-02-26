@@ -20,7 +20,12 @@ set -euo pipefail
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 CP_URL="https://10.10.20.30:8080"
-KC_URL="http://10.10.20.30:8081"
+KC_PROTO="${KC_PROTO:-https}"  # https (default) or http (legacy fallback)
+if [[ "${KC_PROTO}" == "https" ]]; then
+  KC_URL="https://10.10.20.30:8443"
+else
+  KC_URL="http://10.10.20.30:8081"
+fi
 KC_REALM="ztna"
 KC_CLIENT="ztna-control-plane"
 GW_HOST="10.10.10.20"
