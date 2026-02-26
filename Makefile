@@ -13,7 +13,7 @@
         logs-cp logs-gw clean \
         build-cp build-gw build-cli test-unit test certs \
         init check-requirements plan apply test-flux2-local setup-routing \
-        demo demo-auto demo-reset demo-narrator
+        demo demo-auto demo-manual demo-reset demo-narrator
 
 PROJECT_DIR   := $(shell pwd)
 TERRAFORM_DIR := $(PROJECT_DIR)/lab/terraform
@@ -87,9 +87,9 @@ help:
 	@echo "$(BLUE)Compatibilité legacy:$(NC) init, check-requirements, plan, apply, test-flux2-local"
 	@echo ""
 	@echo "$(YELLOW)Démo soutenance$(NC)"
-	@echo "  make demo               Démo live multi-terminaux GNOME (mode manuel)"
-	@echo "  make demo-auto          Démo automatique (DELAY=$(DELAY) sec entre étapes)"
-	@echo "  make demo-auto DELAY=3  Démo automatique cadence rapide"
+	@echo "  make demo               Démo complète automatique (DELAY=$(DELAY)s entre étapes)"
+	@echo "  make demo DELAY=3       Démo automatique cadence rapide"
+	@echo "  make demo-manual        Démo interactive (mode manuel — Entrée entre étapes)"
 	@echo "  make demo-narrator      Panneau narrateur seul (terminal dédié)"
 	@echo "  make demo-reset         Réinitialiser l'état de la démo"
 
@@ -262,6 +262,10 @@ clean:
 # ============================================================================
 
 demo:
+	@chmod +x ./demo/run.sh ./demo/conductor.sh ./demo/steps/*.sh ./demo/lib/*.sh 2>/dev/null || true
+	@bash ./demo/run.sh --mode auto --delay $(DELAY)
+
+demo-manual:
 	@chmod +x ./demo/run.sh ./demo/conductor.sh ./demo/steps/*.sh ./demo/lib/*.sh 2>/dev/null || true
 	@bash ./demo/run.sh --mode manual
 
