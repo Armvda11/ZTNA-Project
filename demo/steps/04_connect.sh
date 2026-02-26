@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
 # =============================================================================
-# demo/steps/04_connect.sh — Accès à la ressource interne via ZTNA (Flux 2)
+# demo/steps/04_connect.sh — Accès réel à la ressource + session ZTNA live
 #
-# Démontre le principe fondamental du Zero Trust :
-#   1. Accès DIRECT impossible — lan-app:80 n'est pas routable depuis WAN
-#   2. Accès via ZTNA — chaque requête passe par une autorisation mTLS + PEP
-#   3. Trois appels API réels (status, assets, secrets) — chacun = 1 cycle ZTNA
-#
-# ACCÈS MANUEL depuis le terminal wan-client :
-#   ztna whoami
-#   ztna get /api/status
-#   ztna get /api/assets
-#   ztna get /api/secrets
+# Phase 1 : accès direct LAN impossible (isolement réseau)
+# Phase 2 : worker Python lancé en arrière-plan sur wan-client
+#           Il reconnecte automatiquement (HTTP/1.0 → nouvelle connexion ZTNA)
+#           La session reste ACTIVE — l'étape 06 la coupera via l'admin API
 # =============================================================================
 set -uo pipefail
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -19,59 +13,70 @@ source "${DEMO_DIR}/lib/colors.sh"
 source "${DEMO_DIR}/lib/banner.sh"
 source "${DEMO_DIR}/lib/ssh.sh"
 
-print_step_banner "4" "ACCES A LA RESSOURCE — FLUX ZTNA" "wan-client --> GW (mTLS) --> CP (authorize) --> lan-app"
+print_step_banner "4" "ACCES A LA RESSOURCE — SESSION ZTNA LIVE" \
+    "wan-client ──mTLS──> GW (PEP) ──authorize──> CP ──proxy──> lan-app"
 
-echo -e "${BOLD}Zero Trust Network Access — Preuve par l'exemple${NC}"
+echo -e "${BOLD}Zero Trust Network Access — Session persistante${NC}"
 print_separator
-print_kv "Protocole"   "mTLS TLS 1.3 — device-cert X.509 (etape 3)"
+print_kv "Protocole"   "mTLS TLS 1.3 — device-cert X.509 (étape 3)"
 print_kv "Gateway"     "${GW_IP}:4433"
 print_kv "Ressource"   "ACME Corp Internal API  lan-app:80"
-print_kv "CP consulte" "POST /api/v1/pep/authorize  (PEP)"
+print_kv "CP"          "POST /api/v1/pep/authorize  (PEP)"
 print_kv "Politique"   "group:ztna-admins -> allow"
-print_kv "Acces LAN"   "${APP_IP}:80  (non routable depuis WAN)"
+print_kv "Réseau LAN"  "${APP_IP}:80  (non routable depuis WAN)"
 echo -e ""
 
-# ─── Phase 1 : prouver que l'accès direct LAN est impossible ─────────────────
-echo -e "${BOLD}Phase 1 — Sans ZTNA : tentative d'acces direct${NC}"
+# ─── Phase 1 : accès direct impossible ───────────────────────────────────────
+echo -e "${BOLD}Phase 1 — Sans ZTNA : tentative d'accès direct${NC}"
 print_separator
 
-echo -e "${INFO}[wan-client] Tentative d'acces direct a ${APP_IP}:80 (reseau LAN interne)…${NC}"
 ssh_client bash <<'TRY_DIRECT'
 if timeout 3 bash -c 'echo >/dev/tcp/10.10.30.10/80' 2>/dev/null; then
-    echo -e "\033[0;33m  Acces direct possible (inattendu dans ce lab)\033[0m"
+    echo -e "\033[0;33m  Accès direct possible (inattendu dans ce lab)\033[0m"
 else
-    echo -e "\033[0;31m  [BLOQUE] Connexion TCP refusee — 10.10.30.10:80 injoignable depuis WAN\033[0m"
-    echo -e "\033[2m  La ressource est isolee sur le reseau LAN (10.10.30.0/24).\033[0m"
-    echo -e "\033[2m  Aucune route, aucun acces sans passer par la Gateway ZTNA.\033[0m"
+    echo -e "\033[0;31m  [BLOCKE] Connexion TCP refusée — 10.10.30.10:80 injoignable depuis WAN\033[0m"
+    echo -e "\033[2m  La ressource est isolée sur le réseau LAN (10.10.30.0/24).\033[0m"
+    echo -e "\033[2m  Aucune route, aucun accès sans passer par la Gateway ZTNA.\033[0m"
 fi
 TRY_DIRECT
 
 echo -e ""
 
-# ─── Phase 2 : accès via ZTNA — 3 appels réels avec autorisation à chaque fois ──
-echo -e "${BOLD}Phase 2 — Avec ZTNA : acces autorise apres verification d'identite${NC}"
+# ─── Phase 2 : session ZTNA persistante en arrière-plan ──────────────────────
+echo -e "${BOLD}Phase 2 — Avec ZTNA : worker de session en arrière-plan${NC}"
 print_separator
-echo -e "${DIM}  Chaque appel API = 1 cycle complet : mTLS + identite cert + PEP authorize${NC}"
+echo -e "${DIM}  Un tunnel mTLS est ouvert vers lan-app via la Gateway à chaque requête.${NC}"
+echo -e "${DIM}  Le worker tourne en arrière-plan — l'étape 06 coupera sa session en direct.${NC}"
 echo -e ""
 
-ssh_client bash <<ENDSSH
-set -e
-CERT_FILE="/tmp/ztna-demo/device.crt"
-KEY_FILE="/tmp/ztna-demo/device.key"
-
-if [[ ! -f "\$CERT_FILE" ]]; then
-    echo -e "\033[0;31m[✗]\033[0m Certificat manquant — executez d'abord l'etape 03"
-    exit 1
-fi
-
-python3 - <<'PYEOF'
+# Copier le script Python worker sur wan-client
+ssh_client "cat > /tmp/ztna-worker.py" << 'PYEOF'
+#!/usr/bin/env python3
+"""
+ZTNA session worker — tourne en arrière-plan sur wan-client.
+- Ouvre un tunnel mTLS vers la Gateway (CONNECT handshake)
+- Envoie GET /api/status toutes les 3s, reconnecte sur HTTP/1.0 EOF
+- Ecrit dans /tmp/ztna-session.log
+- Quitte sur ConnectionResetError/SSLError (tunnel tué par Gateway)
+- Timeout max 120s (sécurité auto-stop demo)
+"""
 import ssl, socket, struct, json, sys, time
 
-GW_HOST   = "${GW_IP}"
+GW_HOST   = "10.10.10.20"
 GW_PORT   = 4433
+TARGET    = "lan-app"
 CERT_FILE = "/tmp/ztna-demo/device.crt"
 KEY_FILE  = "/tmp/ztna-demo/device.key"
-TARGET    = "lan-app"
+MAX_SEC   = 120
+LOG_FILE  = "/tmp/ztna-session.log"
+
+import os
+os.makedirs("/tmp/ztna-demo", exist_ok=True)
+
+def log(msg):
+    with open(LOG_FILE, "a") as f:
+        f.write(msg + "\n")
+    print(msg, flush=True)
 
 def new_ctx():
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
@@ -81,109 +86,188 @@ def new_ctx():
     ctx.verify_mode    = ssl.CERT_NONE
     return ctx
 
-def ztna_get(endpoint):
-    """Ouvre une connexion ZTNA (mTLS + autorisation PEP) puis envoie le GET HTTP."""
-    req = json.dumps({
+def read_msg(conn):
+    buf = b""
+    while len(buf) < 4:
+        chunk = conn.recv(4 - len(buf))
+        if not chunk:
+            raise RuntimeError("connexion fermée pendant lecture handshake")
+        buf += chunk
+    size = struct.unpack(">I", buf)[0]
+    data = b""
+    while len(data) < size:
+        chunk = conn.recv(size - len(data))
+        if not chunk:
+            raise RuntimeError("connexion fermée pendant lecture message")
+        data += chunk
+    return json.loads(data)
+
+def open_tunnel():
+    raw = socket.create_connection((GW_HOST, GW_PORT), timeout=15)
+    conn = new_ctx().wrap_socket(raw)
+    req_body = json.dumps({
         "protocol_version": 1, "action": "connect",
         "resource": {"type": "http", "host": TARGET, "port": 80},
-        "context": {"src_ip": "", "device_info": {}}
+        "context": {}
     }).encode()
-    raw = socket.create_connection((GW_HOST, GW_PORT), timeout=30)
-    with new_ctx().wrap_socket(raw) as conn:
-        # Handshake ZTNA (timeout 30s — CP call inclus)
-        conn.sendall(struct.pack(">I", len(req)) + req)
-        rl = b""
-        while len(rl) < 4: rl += conn.recv(4 - len(rl))
-        ml = struct.unpack(">I", rl)[0]
-        p = b""
-        while len(p) < ml: p += conn.recv(ml - len(p))
-        resp = json.loads(p)
-        if resp.get("decision") != "allow":
-            return None, resp.get("reason", "?"), resp.get("decision_id", "")
-        decision_id = resp.get("decision_id", "?")
-        # Requete HTTP via tunnel proxifie (HTTP/1.0 ferme la conn apres reponse)
-        conn.settimeout(8)   # court timeout : la reponse arrive vite, on n'attend pas close_notify
-        conn.sendall(f"GET {endpoint} HTTP/1.0\r\nHost: {TARGET}\r\n\r\n".encode())
-        data = b""
-        try:
-            while True:
-                chunk = conn.recv(4096)
-                if not chunk: break
-                data += chunk
-        except Exception:
-            pass  # TLS close_notify absent => reponse deja recue dans data
-        if not data:
-            raise RuntimeError(f"Aucune reponse HTTP de {TARGET}")
-        header, body = data.split(b"\r\n\r\n", 1)
-        return (header.splitlines()[0].decode(), json.loads(body), decision_id), None, "allow"
+    conn.sendall(struct.pack(">I", len(req_body)) + req_body)
+    resp = read_msg(conn)
+    if resp.get("decision") != "allow":
+        raise PermissionError(f"DENY: {resp.get('reason','?')}")
+    return conn, resp
 
-CALLS = [
-    ("/api/status",  "Etat du service interne"),
-    ("/api/assets",  "Inventaire des assets (serveurs, postes, reseau)"),
-    ("/api/secrets", "Secrets & credentials  [CONFIDENTIEL]"),
-]
-
-print(f"  Certificat : {CERT_FILE}")
-ci_info = None
+# ── Ouverture initiale ────────────────────────────────────────────────────────
+log(f"  Connexion mTLS → {GW_HOST}:{GW_PORT} …")
 try:
-    import subprocess, re
-    out = subprocess.check_output(
-        ["openssl","x509","-noout","-subject","-serial","-in",CERT_FILE],
-        stderr=subprocess.DEVNULL).decode()
-    subj   = re.search(r"subject=(.+)", out)
-    serial = re.search(r"serial=(.+)", out)
-    if subj:   print(f"  Identite   : {subj.group(1).strip()}")
-    if serial: print(f"  Serial     : {serial.group(1).strip().lower()}")
-except Exception: pass
-print()
+    conn, resp = open_tunnel()
+except PermissionError as e:
+    log(f"\033[0;31m  [DENY]\033[0m {e}")
+    sys.exit(1)
+except Exception as e:
+    log(f"\033[0;31m  [ERREUR TUNNEL]\033[0m {e}")
+    sys.exit(1)
 
-ok_count = 0
-for i, (endpoint, label) in enumerate(CALLS, 1):
-    print(f"\033[0;36m  [{i}/{len(CALLS)}] {label}\033[0m")
-    print(f"         wan-client  -->  ztna-gw:4433 (mTLS)  -->  CP/authorize  -->  {TARGET}:80")
-    result, reason, decision = ztna_get(endpoint)
-    if result is None:
-        print(f"\033[0;31m         <-- DENY  reason={reason}\033[0m")
+dec_id  = resp.get("decision_id", "?")
+ttl_sec = resp.get("ttl_seconds", 0)
+log(f"\033[0;32m  [ALLOW]\033[0m decision_id={dec_id[:32]}  ttl={ttl_sec}s")
+log(f"\033[0;32m  Tunnel TCP ouvert :\033[0m {GW_HOST}:{GW_PORT} → {TARGET}:80")
+log(f"\033[0;33m  Session active — requêtes toutes les 3s (Ctrl+C ou étape 06 pour couper)…\033[0m")
+log("")
+
+http_req = (
+    f"GET /api/status HTTP/1.1\r\nHost: {TARGET}\r\n"
+    "Connection: keep-alive\r\n\r\n"
+).encode()
+
+iteration = 0
+start     = time.time()
+
+while time.time() - start < MAX_SEC:
+    iteration += 1
+    try:
+        conn.settimeout(10)
+        conn.sendall(http_req)
+        raw_resp = b""
+        conn.settimeout(8)
+        while True:
+            chunk = conn.recv(4096)
+            if not chunk:
+                # EOF — HTTP/1.0 ferme après réponse → reconnecter
+                raise EOFError("HTTP/1.0 EOF")
+            raw_resp += chunk
+            if b"\r\n\r\n" in raw_resp:
+                break
+
+        status = raw_resp.split(b"\r\n")[0].decode(errors="replace")
+        body_raw = raw_resp.split(b"\r\n\r\n", 1)[1] if b"\r\n\r\n" in raw_resp else b""
+        try:
+            data     = json.loads(body_raw)
+            host_v   = data.get("host", TARGET)
+            uptime_v = data.get("uptime_s", "?")
+            log(f"  \033[0;32m[{iteration:03d}]\033[0m {status:<25s}  host={host_v}  uptime={uptime_v}s  t={time.strftime('%H:%M:%S')}")
+        except Exception:
+            log(f"  \033[0;32m[{iteration:03d}]\033[0m {status}  t={time.strftime('%H:%M:%S')}")
+
+    except EOFError:
+        # HTTP/1.0 : le serveur ferme après chaque réponse → reconnecter silencieusement
+        try:
+            conn.close()
+        except Exception:
+            pass
+        try:
+            conn, resp = open_tunnel()
+        except PermissionError as e:
+            log(f"\n\033[0;31m  ══════════════════════════════════════════════════════════\033[0m")
+            log(f"\033[0;31m  SESSION COUPEE PAR L'ADMINISTRATEUR  (accès refusé)\033[0m")
+            log(f"\033[0;31m  ══════════════════════════════════════════════════════════\033[0m")
+            log(f"  Raison : {e}")
+            sys.exit(0)
+        except Exception as e:
+            log(f"  \033[0;33m[reconnect]\033[0m {e}")
+            time.sleep(5)
+            continue
+        time.sleep(3)
+        continue
+
+    except (ssl.SSLError, ConnectionResetError, BrokenPipeError, OSError) as e:
+        log(f"\n\033[0;31m  ══════════════════════════════════════════════════════════\033[0m")
+        log(f"\033[0;31m  SESSION COUPEE PAR L'ADMINISTRATEUR\033[0m")
+        log(f"\033[0;31m  ══════════════════════════════════════════════════════════\033[0m")
+        log(f"  Raison : {type(e).__name__} — {e}")
+        log(f"  Requêtes effectuées avant la coupure : {iteration}")
+        sys.exit(0)
+
+    except socket.timeout:
+        log(f"  \033[0;33m[{iteration:03d}]\033[0m timeout — reconnexion…")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        try:
+            conn, resp = open_tunnel()
+        except Exception as e:
+            log(f"  \033[0;31m[ERREUR reconnect]\033[0m {e}")
+            time.sleep(5)
+        time.sleep(3)
+        continue
+
+    except Exception as e:
+        log(f"  \033[0;31m[ERREUR]\033[0m {type(e).__name__}: {e}")
         sys.exit(1)
-    status_line, body, dec_id = result
-    print(f"\033[0;32m         <-- ALLOW  {status_line}  decision={dec_id[:16]}...\033[0m")
-    print()
 
-    if endpoint == "/api/status":
-        svc = body.get("services", {})
-        print(f"         host={body.get('host')}  uptime={body.get('uptime_s')}s")
-        print(f"         services: " + "  ".join(f"{k}={v}" for k,v in svc.items()))
+    time.sleep(3)
 
-    elif endpoint == "/api/assets":
-        print(f"         {body.get('count')} assets — reseau LAN prive :")
-        for a in body.get("assets", []):
-            col = "\033[0;32m" if a.get("status") in ("running","active") else "\033[0;33m"
-            print(f"         {col}  {a['id']:8s}  {a['name']:22s}  {a['type']:14s}  {a['status']}\033[0m")
-
-    elif endpoint == "/api/secrets":
-        print(f"\033[0;33m         {body.get('notice')}\033[0m")
-        print(f"         {body.get('count')} secrets — accessibles uniquement via ZTNA :")
-        for s in body.get("secrets", []):
-            print(f"           {s['key']:35s}  rotation={s['rotation']}  owner={s['owner']}")
-
-    print()
-    ok_count += 1
-    if i < len(CALLS):
-        time.sleep(0.5)
-
-print(f"\033[0;32m  {ok_count}/{len(CALLS)} appels API autorises et executes avec succes.\033[0m")
-print(f"  Chaque appel a traverse le cycle complet : mTLS -> PEP -> proxy -> lan-app")
+log(f"\n  [worker] Durée max ({MAX_SEC}s) atteinte — arrêt automatique.")
 PYEOF
-ENDSSH
+
+echo -e "${INFO}Lancement du worker ZTNA en arrière-plan sur wan-client…${NC}"
+
+# Lancer en background (nohup + disown)
+ssh_client bash <<'LAUNCH'
+rm -f /tmp/ztna-session.log
+nohup python3 /tmp/ztna-worker.py > /tmp/ztna-session.log 2>&1 &
+echo $! > /tmp/ztna-session.pid
+disown
+sleep 0.5
+echo "[✓] Worker lancé (PID=$(cat /tmp/ztna-session.pid 2>/dev/null || echo ?))"
+LAUNCH
+
+# Attendre le premier [ALLOW] avec timeout 10s
+echo -e "${INFO}Attente de l'autorisation PEP (max 10s)…${NC}"
+ALLOWED=0
+for i in $(seq 1 10); do
+    FIRST_LINE=$(ssh_client "grep -m1 '\[ALLOW\]\|DENY\|ERREUR' /tmp/ztna-session.log 2>/dev/null" 2>/dev/null || true)
+    if [[ -n "$FIRST_LINE" ]]; then
+        ALLOWED=1
+        break
+    fi
+    sleep 1
+done
 
 echo -e ""
-print_allow
+echo -e "${BOLD}  ─── Session ZTNA — log en direct (10s) ───${NC}"
 echo -e ""
-print_ok "Flux ZTNA complet — identite verifiee, ressource interne accessible"
-echo -e ""
-echo -e "${BOLD}  Acces manuel depuis le terminal wan-client :${NC}"
-echo -e "${CYAN}    ztna whoami${NC}"
-echo -e "${CYAN}    ztna status${NC}"
-echo -e "${CYAN}    ztna get /api/assets${NC}"
-echo -e "${CYAN}    ztna get /api/secrets${NC}"
 
+# Afficher le log en direct pendant 10s (poll toutes les 2s)
+PREV_LINES=0
+for i in $(seq 1 5); do
+    sleep 2
+    NEW_LINES=$(ssh_client "wc -l < /tmp/ztna-session.log 2>/dev/null" 2>/dev/null | tr -d ' ' || echo "0")
+    if [[ "$NEW_LINES" -gt "$PREV_LINES" ]]; then
+        ssh_client "tail -n $((NEW_LINES - PREV_LINES)) /tmp/ztna-session.log 2>/dev/null" 2>/dev/null | sed 's/^/  /' || true
+        PREV_LINES="$NEW_LINES"
+    fi
+done
+
+echo -e ""
+
+if [[ "$ALLOWED" -eq 0 ]]; then
+    print_warn "Aucune autorisation détectée — vérifier Gateway/CP"
+else
+    print_ok "Session ZTNA active en arrière-plan sur wan-client"
+fi
+
+echo -e ""
+echo -e "${YELLOW}${BOLD}  → Le worker continue de tourner — l'étape 06 le coupera en direct.${NC}"
+echo -e "${DIM}  Log visible sur wan-client : tail -f /tmp/ztna-session.log${NC}"
+echo -e "${DIM}  Accès manuel : ztna connect http:lan-app:80 --local-port 18080${NC}"

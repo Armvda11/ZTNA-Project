@@ -9,22 +9,22 @@
 #   - Keycloak      : 10.10.20.30:8081
 
 server:
-  listen_addr: "0.0.0.0:9443"
+  listen_addr: "0.0.0.0:4433"             # ← 4433 (aligne sur scripts démo / ztna-cli.py)
   tls:
     cert_file: "./certs/gateway.crt"       # Certificat TLS de la Gateway
     key_file: "./certs/gateway.key"        # Clé privée de la Gateway
     client_ca_file: "./certs/client-ca.crt" # CA pour vérifier les certs clients (émise par le CP)
 
 control_plane:
-  base_url: "https://10.10.20.30:8443"     # Endpoint PEP du Control Plane
+  base_url: "https://10.10.20.30:8080"     # ← Port 8080 : API publique + PEP mode token
   ca_file: "./certs/cp-ca.crt"             # CA pour vérifier le cert du CP
   insecure_skip_verify: false
 
 # Identifiants PEP pour l'authentification de la Gateway auprès du CP.
 # Correspondent à la configuration pep.tokens dans le CP.
 pep:
-  id: "ztna-gw-1"
-  token: "CHANGE_ME_LONG_RANDOM"           # ⚠️ Changer cette valeur !
+  id: "ztna-gw-01"                         # ← doit matcher control-plane/config.lab.yaml tokens
+  token: "ztna-lab-pep-secret-2026"        # ← secret aligné avec le CP
 
 proxy:
   dial_timeout: "10s"                      # Timeout de connexion vers les ressources cibles

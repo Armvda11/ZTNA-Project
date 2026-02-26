@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -70,7 +71,8 @@ func (s *Store) ListSessions(ctx context.Context, limit int) ([]model.Session, e
 		`SELECT session_id, decision_id, subject_sub, subject_username,
 		        device_serial, resource_type, resource_match,
 		        start_time, COALESCE(end_time,''), bytes_in, bytes_out,
-		        duration_ms, COALESCE(end_reason,'')
+		        duration_ms, COALESCE(end_reason,''),
+		        COALESCE(killed_at,''), COALESCE(killed_by,'')
 		   FROM sessions
 		  ORDER BY start_time DESC
 		  LIMIT ?`, limit)
@@ -89,10 +91,67 @@ func (s *Store) ListSessions(ctx context.Context, limit int) ([]model.Session, e
 			&sess.StartTime, &sess.EndTime,
 			&sess.BytesIn, &sess.BytesOut,
 			&sess.DurationMs, &sess.EndReason,
+			&sess.KilledAt, &sess.KilledBy,
 		); err != nil {
 			return nil, fmt.Errorf("scan session: %w", err)
 		}
 		sessions = append(sessions, sess)
 	}
 	return sessions, rows.Err()
+}
+
+// GetSession retourne une session par son ID.
+func (s *Store) GetSession(ctx context.Context, sessionID string) (model.Session, error) {
+	var sess model.Session
+	err := s.db.QueryRowContext(ctx,
+		`SELECT session_id, decision_id, subject_sub, subject_username,
+		        device_serial, resource_type, resource_match,
+		        start_time, COALESCE(end_time,''), bytes_in, bytes_out,
+		        duration_ms, COALESCE(end_reason,''),
+		        COALESCE(killed_at,''), COALESCE(killed_by,'')
+		   FROM sessions WHERE session_id = ?`, sessionID).Scan(
+		&sess.SessionID, &sess.DecisionID,
+		&sess.SubjectSub, &sess.SubjectUsername,
+		&sess.DeviceSerial, &sess.ResourceType, &sess.ResourceMatch,
+		&sess.StartTime, &sess.EndTime,
+		&sess.BytesIn, &sess.BytesOut,
+		&sess.DurationMs, &sess.EndReason,
+		&sess.KilledAt, &sess.KilledBy,
+	)
+	if err != nil {
+		return model.Session{}, fmt.Errorf("get session %s: %w", sessionID, err)
+	}
+	return sess, nil
+}
+
+// KillSession marque une session active comme tuée par un admin.
+// Retourne false si la session n'existe pas.
+func (s *Store) KillSession(ctx context.Context, sessionID string, killedBy string) (bool, error) {
+	killedAt := time.Now().UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE sessions SET killed_at = ?, killed_by = ?
+		  WHERE session_id = ? AND killed_at IS NULL`,
+		killedAt, killedBy, sessionID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("kill session %s: %w", sessionID, err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// IsSessionValid retourne true si la session existe et n'a pas été tuée.
+// Retourne true aussi si la session est introuvable (session pas encore enregistrée
+// ou déjà purgée) pour ne pas couper par erreur.
+func (s *Store) IsSessionValid(ctx context.Context, sessionID string) (bool, error) {
+	var killedAt string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(killed_at,'') FROM sessions WHERE session_id = ?`, sessionID).Scan(&killedAt)
+	if err == sql.ErrNoRows {
+		return true, nil // session inconnue → fail-open
+	}
+	if err != nil {
+		return true, fmt.Errorf("is session valid %s: %w", sessionID, err)
+	}
+	return killedAt == "", nil
 }

@@ -16,6 +16,10 @@ type Session struct {
 	BytesIn         int64  `json:"bytes_in"`
 	BytesOut        int64  `json:"bytes_out"`
 	DurationMs      int64  `json:"duration_ms"`
-	// EndReason : "eof" | "error" | "revoked" | "dial_error"
+	// EndReason : "eof" | "error" | "revoked" | "dial_error" | "ttl_expired"
 	EndReason string `json:"end_reason,omitempty"`
+	// KilledAt est l'horodatage où un admin a tué la session (non nul = session killée)
+	KilledAt string `json:"killed_at,omitempty"`
+	// KilledBy est le sub OIDC de l'admin qui a tué la session
+	KilledBy string `json:"killed_by,omitempty"`
 }

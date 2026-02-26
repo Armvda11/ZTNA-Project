@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/go-chi/chi/v5"
+
 	"control-plane/internal/domain/model"
 	"control-plane/internal/service/session"
 )
@@ -79,4 +81,22 @@ func (h *PEPSessionHandler) List(w http.ResponseWriter, r *http.Request) {
 		sessions = []model.Session{}
 	}
 	writeJSON(w, http.StatusOK, sessions)
+}
+
+// Valid traite GET /api/v1/pep/sessions/{id}/valid.
+// Retourne {"valid": true} si la session existe et n'a pas été tuée,
+// {"valid": false} si un admin l'a marquée comme killed.
+// Utilisé par la Gateway toutes les 5s pour détecter un kill admin en live.
+func (h *PEPSessionHandler) Valid(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "id")
+	if sessionID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session id manquant"})
+		return
+	}
+	valid, err := h.svc.IsValid(r.Context(), sessionID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"valid": valid})
 }

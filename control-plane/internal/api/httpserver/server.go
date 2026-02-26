@@ -35,6 +35,7 @@ type Dependencies struct {
 	PEPRegisterHandler  *handlers.PEPRegisterHandler
 	PEPHeartbeatHandler *handlers.PEPHeartbeatHandler
 	PEPSessionHandler   *handlers.PEPSessionHandler // télémétrie de session
+	AdminSessionHandler *handlers.AdminSessionsHandler // kill session admin
 	AdminPolicies       *handlers.AdminPoliciesHandler
 	AdminAudit          *handlers.AdminAuditHandler
 	WhoamiHandler       *handlers.WhoamiHandler
@@ -86,6 +87,7 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 				if deps.PEPSessionHandler != nil {
 					r.Post("/sessions/start", deps.PEPSessionHandler.Start)
 					r.Post("/sessions/end", deps.PEPSessionHandler.End)
+					r.Get("/sessions/{id}/valid", deps.PEPSessionHandler.Valid)
 				}
 			})
 		}
@@ -102,6 +104,10 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 			}
 			if deps.PEPSessionHandler != nil {
 				r.Get("/sessions", deps.PEPSessionHandler.List)
+			}
+			if deps.AdminSessionHandler != nil {
+				r.Get("/sessions/{id}", deps.AdminSessionHandler.Get)
+				r.Delete("/sessions/{id}", deps.AdminSessionHandler.Kill)
 			}
 		})
 	})
@@ -154,6 +160,7 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 			if deps.PEPSessionHandler != nil {
 				r.Post("/sessions/start", deps.PEPSessionHandler.Start)
 				r.Post("/sessions/end", deps.PEPSessionHandler.End)
+				r.Get("/sessions/{id}/valid", deps.PEPSessionHandler.Valid)
 			}
 		})
 

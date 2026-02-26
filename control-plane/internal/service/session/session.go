@@ -16,6 +16,9 @@ type Store interface {
 	CreateSession(ctx context.Context, sess model.Session) error
 	CompleteSession(ctx context.Context, sess model.Session) error
 	ListSessions(ctx context.Context, limit int) ([]model.Session, error)
+	GetSession(ctx context.Context, sessionID string) (model.Session, error)
+	KillSession(ctx context.Context, sessionID string, killedBy string) (bool, error)
+	IsSessionValid(ctx context.Context, sessionID string) (bool, error)
 }
 
 // Service gère le cycle de vie des sessions TCP relayées.
@@ -88,4 +91,22 @@ func (svc *Service) End(ctx context.Context, req EndRequest) error {
 // List retourne les dernières sessions, pour l'interface d'audit admin.
 func (svc *Service) List(ctx context.Context, limit int) ([]model.Session, error) {
 	return svc.store.ListSessions(ctx, limit)
+}
+
+// Get retourne une session par son ID.
+func (svc *Service) Get(ctx context.Context, sessionID string) (model.Session, error) {
+	return svc.store.GetSession(ctx, sessionID)
+}
+
+// Kill marque une session active comme tuée par un administrateur.
+// killedBy est le sub OIDC de l'admin (extrait depuis le JWT via le contexte).
+// Retourne false si la session n'existe pas ou est déjà tuée.
+func (svc *Service) Kill(ctx context.Context, sessionID string, killedBy string) (bool, error) {
+	return svc.store.KillSession(ctx, sessionID, killedBy)
+}
+
+// IsValid retourne true si la session existe et n'a pas été tuée par un admin.
+// Utilisé par la Gateway via GET /api/v1/pep/sessions/{id}/valid.
+func (svc *Service) IsValid(ctx context.Context, sessionID string) (bool, error) {
+	return svc.store.IsSessionValid(ctx, sessionID)
 }

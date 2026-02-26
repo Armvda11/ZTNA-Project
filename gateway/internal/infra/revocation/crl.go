@@ -13,13 +13,23 @@ import (
 
 // Store maintient un set en mémoire de serials révoqués.
 type Store struct {
-	mu      sync.RWMutex
-	revoked map[string]struct{}
+	mu       sync.RWMutex
+	revoked  map[string]struct{}
+	onRevoke func([]string) // appelé après chaque Replace avec la nouvelle liste
 }
 
 // NewStore crée un store CRL vide.
 func NewStore() *Store {
 	return &Store{revoked: make(map[string]struct{})}
+}
+
+// SetOnRevoke enregistre une fonction appelée après chaque remplacement de la CRL.
+// fn reçoit la liste complète des serials actuellement révoqués.
+// Utilisé par la Gateway pour appeler session.Manager.KillRevoked.
+func (s *Store) SetOnRevoke(fn func([]string)) {
+	s.mu.Lock()
+	s.onRevoke = fn
+	s.mu.Unlock()
 }
 
 // IsRevoked indique si un serial est actuellement marqué révoqué.
@@ -30,7 +40,7 @@ func (s *Store) IsRevoked(serial string) bool {
 	return ok
 }
 
-// Replace remplace atomiquement la CRL en mémoire.
+// Replace remplace atomiquement la CRL en mémoire et déclenche le callback onRevoke.
 func (s *Store) Replace(serials []string) {
 	next := make(map[string]struct{}, len(serials))
 	for _, serial := range serials {
@@ -39,7 +49,13 @@ func (s *Store) Replace(serials []string) {
 
 	s.mu.Lock()
 	s.revoked = next
+	cb := s.onRevoke
 	s.mu.Unlock()
+
+	// Appeler le callback hors du verrou pour éviter le deadlock
+	if cb != nil && len(serials) > 0 {
+		cb(serials)
+	}
 }
 
 // Snapshot retourne une copie du set actuel.

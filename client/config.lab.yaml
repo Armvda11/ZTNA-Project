@@ -21,7 +21,7 @@ control_plane:
   insecure_skip_verify: false
 
 gateway:
-  address: "10.10.20.20:9443"  # Port mTLS de la Gateway
+  address: "10.10.10.20:4433"  # ← IP WAN ztna-gw (accessible depuis wan-client) + port 4433
 
 tls:
   ca_file: "./certs/ca.crt"   # CA de confiance pour vérifier le certificat Gateway

@@ -63,13 +63,24 @@ func main() {
 		}
 	case "connect":
 		if len(args) < 2 {
-			fmt.Fprintf(os.Stderr, "usage: ztna connect <resource>\n")
+			fmt.Fprintf(os.Stderr, "usage: ztna connect <resource> [--local-port <port>]\n")
 			os.Exit(1)
 		}
 		resource := args[1]
-		if err := application.RunConnect(ctx, resource); err != nil {
-			log.Error("connexion échouée", "error", err)
-			os.Exit(1)
+		// Parser les flags spécifiques à connect après la ressource
+		connectFlags := flag.NewFlagSet("connect", flag.ExitOnError)
+		localPort := connectFlags.Int("local-port", 0, "port TCP local pour le mode port-forward")
+		connectFlags.Parse(args[2:]) //nolint:errcheck
+		if *localPort > 0 {
+			if err := application.RunConnectPortForward(ctx, resource, *localPort); err != nil {
+				log.Error("port-forward échoué", "error", err)
+				os.Exit(1)
+			}
+		} else {
+			if err := application.RunConnect(ctx, resource); err != nil {
+				log.Error("connexion échouée", "error", err)
+				os.Exit(1)
+			}
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande inconnue: %s\n", subcmd)
@@ -82,9 +93,15 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: ztna [options] <command> [args]
 
 Commands:
-  login              Authentification OIDC (Keycloak)
-  cert               Demander un certificat mTLS client au Control Plane
-  connect <resource> Établir un tunnel mTLS vers la Gateway pour une ressource
+  login                      Authentification OIDC (Keycloak)
+  cert                       Demander un certificat mTLS client au Control Plane
+  connect <resource>         Tunnel mTLS stdin/stdout (mode ProxyCommand SSH)
+  connect <resource>         Flags optionnels :
+    --local-port <N>           Port-forward local : écoute sur 127.0.0.1:N
+
+Exemples :
+  ztna connect ssh:lan-app:22                          # ProxyCommand : relay stdin/stdout
+  ztna connect http:lan-app:80 --local-port 18080      # port-forward + curl
 
 Options:
   -config string     Chemin vers le fichier de configuration (défaut: config.yaml)

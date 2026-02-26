@@ -1,193 +1,312 @@
 package session
 
 import (
+	"context"
 	"log/slog"
 	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-// TestSessionRegistration tests registering new sessions
-// EXPECTED TO FAIL until session registration is implemented
-func TestSessionRegistration(t *testing.T) {
-	t.Skip("TODO: Session registration not yet implemented - will pass when complete")
-
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	mgr := NewManager(log)
-
-	session := &Session{
-		Sub:          "auth0|user123",
-		Username:     "alice",
-		ResourceType: "ssh",
-		ResourceHost: "backend.local",
-		ResourcePort: 22,
-		StartedAt:    time.Now(),
+// newTestSession crée une session de test avec des valeurs par défaut.
+func newTestSession(sub, username, host string, port int) *Session {
+	return &Session{
+		Sub:          sub,
+		Username:     username,
+		ResourceType: "http",
+		ResourceHost: host,
+		ResourcePort: port,
 		SourceIP:     "192.168.1.100",
-		DecisionID:   "decision-456",
+		DecisionID:   "dec-test-001",
 	}
+}
 
-	// Test: Should register session and return ID
-	sessionID, err := mgr.Register(session)
+// TestSessionRegistration vérifie qu'on peut enregistrer une session et obtenir un ID unique.
+func TestSessionRegistration(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	mgr := NewManager(log)
+
+	sess := newTestSession("user|alice", "alice", "lan-app", 80)
+	cancelCalled := false
+	cancel := func() { cancelCalled = true }
+
+	sessionID, err := mgr.Register(sess, cancel)
 	if err != nil {
-		t.Fatalf("Register() error = %v", err)
+		t.Fatalf("Register() erreur inattendue : %v", err)
 	}
 	if sessionID == "" {
-		t.Error("Register() should return non-empty session ID")
+		t.Error("Register() doit retourner un ID non vide")
+	}
+	// L'ID doit respecter le format UUID (8-4-4-4-12)
+	if len(sessionID) != 36 {
+		t.Errorf("Register() ID = %q, longueur attendue 36 (format UUID), obtenu %d", sessionID, len(sessionID))
 	}
 
-	// Verify session is tracked (will implement Get method)
-	// For now, just verify no error on registration
-	if sessionID == "" {
-		t.Error("Register() should return non-empty session ID")
+	// Vérifier l'ID est enregistré dans les compteurs
+	if count := mgr.ActiveCount(); count != 1 {
+		t.Errorf("ActiveCount() = %d, attendu 1", count)
+	}
+	if count := mgr.ActiveCountForSubject("user|alice"); count != 1 {
+		t.Errorf("ActiveCountForSubject() = %d, attendu 1", count)
+	}
+
+	// Vérifier que le cancel n'a pas encore été appelé
+	if cancelCalled {
+		t.Error("cancel() ne doit pas être appelé lors du Register")
 	}
 }
 
-// TestSessionLimits tests per-subject connection limits
-// EXPECTED TO FAIL until connection limits are implemented
+// TestSessionLimits vérifie que la limite de maxConnsPerSubject (10) est respectée.
 func TestSessionLimits(t *testing.T) {
-	t.Skip("TODO: Connection limits not yet implemented - will pass when complete")
-
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mgr := NewManager(log)
 
-	// Register multiple sessions for same subject
-	sub := "auth0|user123"
-	for i := 0; i < 10; i++ {
-		session := &Session{
-			Sub:          sub,
-			Username:     "alice",
-			ResourceType: "tcp",
-			ResourceHost: "backend.local",
-			ResourcePort: 8080,
-			StartedAt:    time.Now(),
-		}
-		_, err := mgr.Register(session)
+	sub := "user|bob"
+	for i := 0; i < maxConnsPerSubject; i++ {
+		sess := newTestSession(sub, "bob", "lan-app", 80+i)
+		_, err := mgr.Register(sess, func() {})
 		if err != nil {
-			t.Logf("Register() attempt %d error = %v", i+1, err)
+			t.Fatalf("Register() tentative %d sur %d : erreur inattendue %v", i+1, maxConnsPerSubject, err)
 		}
 	}
 
-	// Test: Should enforce max connections per subject
-	// Future: Implement CountBySubject method
-	count := 0 // Placeholder
-	if count > 5 {
-		t.Errorf("Too many sessions for subject: %d, max should be 5", count)
+	// La 11e connexion doit échouer
+	_, err := mgr.Register(newTestSession(sub, "bob", "lan-app", 9999), func() {})
+	if err == nil {
+		t.Errorf("Register() devrait échouer à la %de connexion (limite %d)", maxConnsPerSubject+1, maxConnsPerSubject)
+	}
+	if count := mgr.ActiveCountForSubject(sub); count != maxConnsPerSubject {
+		t.Errorf("ActiveCountForSubject() = %d, attendu %d", count, maxConnsPerSubject)
+	}
+
+	// Un autre utilisateur ne doit pas être bloqué
+	_, err = mgr.Register(newTestSession("user|carol", "carol", "lan-app", 80), func() {})
+	if err != nil {
+		t.Errorf("Register() autre utilisateur ne doit pas être bloqué : %v", err)
 	}
 }
 
-// TestSessionExpiration tests session TTL enforcement
-// EXPECTED TO FAIL until session expiration is implemented
+// TestSessionExpiration vérifie que Unregister décrémente bien les compteurs après une "expiration".
 func TestSessionExpiration(t *testing.T) {
-	t.Skip("TODO: Session expiration not yet implemented - will pass when complete")
-
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mgr := NewManager(log)
 
-	session := &Session{
-		Sub:          "auth0|user123",
-		Username:     "alice",
-		ResourceType: "ssh",
-		ResourceHost: "backend.local",
-		ResourcePort: 22,
-		StartedAt:    time.Now().Add(-20 * time.Minute), // Old session
-		DecisionID:   "decision-456",
+	// Simuler une session "ancienne" (StartedAt dans le passé)
+	sess := newTestSession("user|alice", "alice", "lan-app", 80)
+	sess.StartedAt = time.Now().Add(-20 * time.Minute)
+
+	sessionID, err := mgr.Register(sess, func() {})
+	if err != nil {
+		t.Fatalf("Register() : %v", err)
 	}
 
-	sessionID, _ := mgr.Register(session)
+	if mgr.ActiveCount() != 1 {
+		t.Errorf("ActiveCount() = %d, attendu 1 avant expiration", mgr.ActiveCount())
+	}
 
-	// Test: Session should be expired after TTL
-	time.Sleep(100 * time.Millisecond)
+	// Simuler la fin de la session (le goroutine proxy appelle Unregister)
+	mgr.Unregister(sessionID)
 
-	// Future: Implement IsExpired method
-	_ = sessionID // Use sessionID to avoid unused variable error
+	if mgr.ActiveCount() != 0 {
+		t.Errorf("ActiveCount() = %d, attendu 0 après Unregister", mgr.ActiveCount())
+	}
 }
 
-// TestSessionCleanup tests cleanup of closed sessions
-// EXPECTED TO FAIL until session cleanup is implemented
+// TestSessionCleanup vérifie que Register + Unregister libèrent correctement les ressources.
 func TestSessionCleanup(t *testing.T) {
-	t.Skip("TODO: Session cleanup not yet implemented - will pass when complete")
-
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mgr := NewManager(log)
 
-	session := &Session{
-		Sub:          "auth0|user123",
-		Username:     "alice",
-		ResourceType: "tcp",
-		ResourceHost: "backend.local",
-		ResourcePort: 8080,
-		StartedAt:    time.Now(),
-	}
-
-	sessionID, _ := mgr.Register(session)
-
-	// Test: Should remove session on Close
-	// Future: Implement Close method
-	_ = sessionID // Use sessionID to avoid unused variable error
-}
-
-// TestSessionMetrics tests session metrics collection
-// EXPECTED TO FAIL until metrics are implemented
-func TestSessionMetrics(t *testing.T) {
-	t.Skip("TODO: Session metrics not yet implemented - will pass when complete")
-
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	mgr := NewManager(log)
-
-	// Register multiple sessions
+	sub := "user|cleanup"
+	var ids []string
 	for i := 0; i < 5; i++ {
-		session := &Session{
-			Sub:          "auth0|user123",
-			Username:     "alice",
-			ResourceType: "tcp",
-			ResourceHost: "backend.local",
-			ResourcePort: 8080 + i,
-			StartedAt:    time.Now(),
+		id, err := mgr.Register(newTestSession(sub, "cleanup", "lan-app", 80+i), func() {})
+		if err != nil {
+			t.Fatalf("Register() session %d : %v", i, err)
 		}
-		mgr.Register(session)
+		ids = append(ids, id)
 	}
 
-	// Test: Should provide metrics
-	// Future: Implement GetMetrics method
-	// For now, just verify sessions were registered
-	activeSessions := 5 // Placeholder
-	if activeSessions != 5 {
-		t.Errorf("ActiveSessions = %d, want 5", activeSessions)
+	if mgr.ActiveCount() != 5 {
+		t.Errorf("ActiveCount() = %d, attendu 5", mgr.ActiveCount())
+	}
+
+	// Unregister en ordre inversé
+	for _, id := range ids {
+		mgr.Unregister(id)
+	}
+
+	if mgr.ActiveCount() != 0 {
+		t.Errorf("ActiveCount() = %d, attendu 0 après cleanup", mgr.ActiveCount())
+	}
+
+	// Unregister d'un ID inexistant ne doit pas paniquer
+	mgr.Unregister("id-qui-nexiste-pas")
+}
+
+// TestSessionMetrics vérifie ActiveCount et ActiveCountForSubject avec plusieurs sujets.
+func TestSessionMetrics(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	mgr := NewManager(log)
+
+	// alice : 3 sessions
+	for i := 0; i < 3; i++ {
+		_, err := mgr.Register(newTestSession("user|alice", "alice", "lan-app", 80+i), func() {})
+		if err != nil {
+			t.Fatalf("Register alice %d : %v", i, err)
+		}
+	}
+	// bob : 2 sessions
+	for i := 0; i < 2; i++ {
+		_, err := mgr.Register(newTestSession("user|bob", "bob", "backend", 8080+i), func() {})
+		if err != nil {
+			t.Fatalf("Register bob %d : %v", i, err)
+		}
+	}
+
+	if total := mgr.ActiveCount(); total != 5 {
+		t.Errorf("ActiveCount() = %d, attendu 5", total)
+	}
+	if n := mgr.ActiveCountForSubject("user|alice"); n != 3 {
+		t.Errorf("ActiveCountForSubject(alice) = %d, attendu 3", n)
+	}
+	if n := mgr.ActiveCountForSubject("user|bob"); n != 2 {
+		t.Errorf("ActiveCountForSubject(bob) = %d, attendu 2", n)
+	}
+	if n := mgr.ActiveCountForSubject("user|inexistant"); n != 0 {
+		t.Errorf("ActiveCountForSubject(inexistant) = %d, attendu 0", n)
 	}
 }
 
-// TestSessionConcurrentAccess tests thread-safe operations
-// EXPECTED TO FAIL - but tests concurrent access patterns
-func TestSessionConcurrentAccess(t *testing.T) {
-	t.Skip("TODO: Concurrent session access not yet fully tested - will pass when complete")
-
-	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+// TestKillSessionCallsCancel vérifie que KillSession appelle bien la cancel func et retourne true.
+func TestKillSessionCallsCancel(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	mgr := NewManager(log)
 
-	// Test: Multiple goroutines registering sessions
-	done := make(chan bool, 10)
-	for i := 0; i < 10; i++ {
+	// Contexte lié à la session
+	ctx, cancel := context.WithCancel(context.Background())
+	sessionID, err := mgr.Register(newTestSession("user|alice", "alice", "lan-app", 80), cancel)
+	if err != nil {
+		t.Fatalf("Register() : %v", err)
+	}
+
+	// Vérifier que le contexte est actif
+	select {
+	case <-ctx.Done():
+		t.Fatal("contexte annulé avant KillSession")
+	default:
+	}
+
+	// Kill de la session
+	killed := mgr.KillSession(sessionID)
+	if !killed {
+		t.Error("KillSession() devrait retourner true pour un ID existant")
+	}
+
+	// Le contexte doit être annulé
+	select {
+	case <-ctx.Done():
+		// attendu
+	case <-time.After(100 * time.Millisecond):
+		t.Error("cancel() n'a pas été appelé après KillSession")
+	}
+
+	// KillSession sur un ID inexistant doit retourner false
+	if mgr.KillSession("inexistant-id") {
+		t.Error("KillSession() sur ID inexistant doit retourner false")
+	}
+}
+
+// TestKillRevokedTerminatesSessions vérifie que KillRevoked annule les sessions dont le serial est révoqué.
+func TestKillRevokedTerminatesSessions(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	mgr := NewManager(log)
+
+	cancelCount := int64(0)
+	makeCancel := func() context.CancelFunc {
+		return func() { atomic.AddInt64(&cancelCount, 1) }
+	}
+
+	// Enregistrer 3 sessions avec serial révoqué : "deadbeef"
+	for i := 0; i < 3; i++ {
+		sess := newTestSession("user|alice", "alice", "lan-app", 80+i)
+		sess.DeviceSerial = "deadbeef"
+		_, err := mgr.Register(sess, makeCancel())
+		if err != nil {
+			t.Fatalf("Register() session avec serial révoqué : %v", err)
+		}
+	}
+	// Enregistrer 2 sessions avec un serial différent (ne doit pas être killé)
+	for i := 0; i < 2; i++ {
+		sess := newTestSession("user|bob", "bob", "lan-app", 8080+i)
+		sess.DeviceSerial = "cafecafe"
+		_, err := mgr.Register(sess, makeCancel())
+		if err != nil {
+			t.Fatalf("Register() session non révoquée : %v", err)
+		}
+	}
+
+	mgr.KillRevoked([]string{"deadbeef"})
+
+	// Seulement les 3 sessions avec "deadbeef" doivent être annulées
+	time.Sleep(10 * time.Millisecond) // laisser les cancel s'exécuter
+	if got := atomic.LoadInt64(&cancelCount); got != 3 {
+		t.Errorf("KillRevoked() a annulé %d sessions, attendu 3", got)
+	}
+
+	// KillRevoked avec slice vide ne doit pas paniquer
+	mgr.KillRevoked([]string{})
+	mgr.KillRevoked(nil)
+}
+
+// TestSessionConcurrentAccess vérifie la sécurité concurrente du Manager (pas de race condition).
+func TestSessionConcurrentAccess(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	mgr := NewManager(log)
+
+	const numGoroutines = 8
+	const sessionsPerGoroutine = 1 // 8 < maxConnsPerSubject (10)
+
+	var wg sync.WaitGroup
+	var registered int64
+
+	// Enregistrer des sessions depuis plusieurs goroutines simultanément
+	wg.Add(numGoroutines)
+	for i := 0; i < numGoroutines; i++ {
 		go func(id int) {
-			session := &Session{
-				Sub:          "auth0|user456",
-				Username:     "bob",
-				ResourceType: "tcp",
-				ResourceHost: "backend.local",
-				ResourcePort: 8080,
-				StartedAt:    time.Now(),
+			defer wg.Done()
+			sess := newTestSession("user|concurrent", "concurrent", "lan-app", 80+id)
+			_, err := mgr.Register(sess, func() {})
+			if err == nil {
+				atomic.AddInt64(&registered, 1)
 			}
-			_, err := mgr.Register(session)
-			if err != nil {
-				t.Logf("Concurrent Register() error = %v", err)
-			}
-			done <- true
 		}(i)
 	}
+	wg.Wait()
 
-	// Wait for all goroutines
-	for i := 0; i < 10; i++ {
-		<-done
+	// Toutes les sessions (≤ maxConnsPerSubject) doivent être enregistrées
+	if got := atomic.LoadInt64(&registered); got != numGoroutines*sessionsPerGoroutine {
+		t.Errorf("sessions enregistrées = %d, attendu %d", got, numGoroutines*sessionsPerGoroutine)
 	}
 
-	// Should handle concurrent access without panics
+	// Lire le count concurrent pendant des Unregister simultanés
+	var ids []string
+	for id := range mgr.sessions {
+		ids = append(ids, id)
+	}
+
+	wg.Add(len(ids))
+	for _, id := range ids {
+		go func(sid string) {
+			defer wg.Done()
+			mgr.Unregister(sid)
+		}(id)
+	}
+	wg.Wait()
+
+	if count := mgr.ActiveCount(); count != 0 {
+		t.Errorf("ActiveCount() = %d après cleanup concurrent, attendu 0", count)
+	}
 }

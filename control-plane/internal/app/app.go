@@ -85,6 +85,7 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 		PEPRegisterHandler:  handlers.NewPEPRegisterHandler(gatewaySvc),
 		PEPHeartbeatHandler: handlers.NewPEPHeartbeatHandler(gatewaySvc, cfg.PEPRequireRegistrationEnabled()),
 		PEPSessionHandler:   handlers.NewPEPSessionHandler(sessionSvc),
+		AdminSessionHandler: handlers.NewAdminSessionsHandler(sessionSvc),
 		AdminPolicies:       handlers.NewAdminPoliciesHandler(policySvc, auditSvc),
 		AdminAudit:          handlers.NewAdminAuditHandler(auditSvc),
 		WhoamiHandler:       handlers.NewWhoamiHandler(),

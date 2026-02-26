@@ -152,7 +152,7 @@ resource "libvirt_cloudinit_disk" "ztna_cp_ci" {
   user_data      = templatefile("${path.module}/cloudinit/user-data.tpl", {
     hostname       = "ztna-cp"
     ssh_public_key = var.ssh_public_key
-    extra_packages = ["docker.io", "docker-compose"]
+    extra_packages = ["docker.io"]  # docker-compose-plugin v2 est installé par deploy-control-plane.sh (v1 incompatible Docker ⋥25)
     runcmd_extra   = [
       "systemctl enable --now docker",
       "systemctl enable --now qemu-guest-agent"
@@ -212,13 +212,14 @@ resource "libvirt_cloudinit_disk" "lan_app_ci" {
   user_data      = templatefile("${path.module}/cloudinit/user-data.tpl", {
     hostname       = "lan-app"
     ssh_public_key = var.ssh_public_key
-    extra_packages = ["nginx"]
+    extra_packages = ["python3"]
     runcmd_extra   = [
-      # Nginx : page de démonstration ZTNA
-      "echo '<html><body><h1>ZTNA Lab - lan-app</h1><p>Accès autorisé via ZTNA</p></body></html>' > /var/www/html/index.html",
-      "systemctl enable --now nginx",
+      # DataVault : créer le répertoire de l'application
+      "mkdir -p /opt/datavault",
+      # Écrire un serveur de santé minimal en attendant le déploiement complet via deploy-datavault.sh
+      "python3 -c \"import http.server,json,socket; h=socket.gethostname(); open('/opt/datavault/health.py','w').write(\\\"import http.server,json,socket,time\\nST=time.time()\\nclass H(http.server.BaseHTTPRequestHandler):\\n def log_message(self,*a):pass\\n def do_GET(self):\\n  b=json.dumps({'status':'ok','host':socket.gethostname(),'uptime_s':int(time.time()-ST)}).encode()\\n  self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(b)\\nhttp.server.HTTPServer(('0.0.0.0',80),H).serve_forever()\\n\\\")\"",
+      "nohup python3 /opt/datavault/health.py &>/tmp/datavault-boot.log &",
       # SSH CA : configurer sshd pour faire confiance aux certificats signés par le CP
-      # (exécuté au boot ; le CP peut ne pas être dispo → le script de déploiement reconfigurera)
       "mkdir -p /etc/ssh/auth_principals",
       "echo 'ztna' > /etc/ssh/auth_principals/ztna"
     ]

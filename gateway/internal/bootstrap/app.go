@@ -17,8 +17,8 @@ import (
 	"ztna-gateway/internal/infra/mtls"
 	"ztna-gateway/internal/infra/proxy"
 	crl "ztna-gateway/internal/infra/revocation"
-	tlsutil "ztna-gateway/internal/infra/tls"
 	"ztna-gateway/internal/infra/session"
+	tlsutil "ztna-gateway/internal/infra/tls"
 	protocol "ztna-gateway/internal/usecase/connect"
 )
 
@@ -51,8 +51,12 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 	crlStore := crl.NewStore()
 	decisionCache := decisioncache.New(cfg.DecisionCacheMaxKeys)
 
+	// KillRevoked : quand la CRL est rafraîchie, toutes les sessions actives
+	// dont le serial est révoqué sont immédiatement coupées.
+	crlStore.SetOnRevoke(sessionMgr.KillRevoked)
+
 	// Handler de protocole CONNECT (avec CRL store pour vérification de révocation)
-	connectHandler := protocol.NewHandler(authzClient, tcpProxy, sessionMgr, crlStore, log)
+	connectHandler := protocol.NewHandler(authzClient, tcpProxy, sessionMgr, crlStore, log, cfg.PEP.ID)
 
 	// Listener mTLS
 	listener, err := mtls.NewListener(cfg, connectHandler, log)

@@ -176,3 +176,108 @@ type AuthzResponse struct {
 	PolicyVersion int64  `json:"policy_version"`
 	DecisionID    string `json:"decision_id"`
 }
+
+// --- Télémétrie des sessions ---
+
+// SessionStartRequest est envoyé au CP quand un proxy démarre (POST /pep/sessions/start).
+type SessionStartRequest struct {
+	SessionID       string `json:"session_id"`
+	DecisionID      string `json:"decision_id"`
+	SubjectSub      string `json:"subject_sub"`
+	SubjectUsername string `json:"subject_username"`
+	DeviceSerial    string `json:"device_serial"`
+	ResourceType    string `json:"resource_type"`
+	ResourceMatch   string `json:"resource_match"`
+}
+
+// SessionEndRequest est envoyé au CP à la fermeture du proxy (POST /pep/sessions/end).
+type SessionEndRequest struct {
+	SessionID  string `json:"session_id"`
+	BytesIn    int64  `json:"bytes_in"`
+	BytesOut   int64  `json:"bytes_out"`
+	DurationMs int64  `json:"duration_ms"`
+	EndReason  string `json:"end_reason"`
+}
+
+// SessionStart notifie le CP de l'ouverture d'une session de proxy.
+func (c *Client) SessionStart(req *SessionStartRequest) {
+	if c.httpClient == nil {
+		return
+	}
+	body, _ := json.Marshal(req)
+	cpURL := strings.TrimRight(c.cfg.ControlPlane.BaseURL, "/") + "/api/v1/pep/sessions/start"
+	httpReq, err := http.NewRequest(http.MethodPost, cpURL, bytes.NewReader(body))
+	if err != nil {
+		c.log.Warn("SessionStart: impossible de construire la requête", "error", err)
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-PEP-ID", c.cfg.PEP.ID)
+	httpReq.Header.Set("X-PEP-TOKEN", c.cfg.PEP.Token)
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		c.log.Warn("SessionStart: appel CP échoué", "error", err)
+		return
+	}
+	resp.Body.Close()
+}
+
+// SessionEnd notifie le CP de la fermeture d'une session de proxy.
+func (c *Client) SessionEnd(req *SessionEndRequest) {
+	if c.httpClient == nil {
+		return
+	}
+	body, _ := json.Marshal(req)
+	cpURL := strings.TrimRight(c.cfg.ControlPlane.BaseURL, "/") + "/api/v1/pep/sessions/end"
+	httpReq, err := http.NewRequest(http.MethodPost, cpURL, bytes.NewReader(body))
+	if err != nil {
+		c.log.Warn("SessionEnd: impossible de construire la requête", "error", err)
+		return
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-PEP-ID", c.cfg.PEP.ID)
+	httpReq.Header.Set("X-PEP-TOKEN", c.cfg.PEP.Token)
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		c.log.Warn("SessionEnd: appel CP échoué", "error", err)
+		return
+	}
+	resp.Body.Close()
+}
+
+// IsSessionValid interroge le CP pour savoir si une session est toujours active
+// (non tuée par un admin). Retourne true en cas d'erreur réseau (fail-open) pour
+// ne pas couper les sessions sur instabilité réseau passagère.
+func (c *Client) IsSessionValid(sessionID string) bool {
+	if c.httpClient == nil {
+		return true
+	}
+	cpURL := strings.TrimRight(c.cfg.ControlPlane.BaseURL, "/") + "/api/v1/pep/sessions/" + sessionID + "/valid"
+	httpReq, err := http.NewRequest(http.MethodGet, cpURL, nil)
+	if err != nil {
+		return true
+	}
+	httpReq.Header.Set("X-PEP-ID", c.cfg.PEP.ID)
+	httpReq.Header.Set("X-PEP-TOKEN", c.cfg.PEP.Token)
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		c.log.Warn("IsSessionValid: appel CP échoué (fail-open)", "session_id", sessionID, "error", err)
+		return true
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		// Session inconnue du CP (pas encore enregistrée ou déjà purgée)
+		return true
+	}
+	if resp.StatusCode != http.StatusOK {
+		c.log.Warn("IsSessionValid: réponse inattendue (fail-open)", "session_id", sessionID, "status", resp.StatusCode)
+		return true
+	}
+	var result struct {
+		Valid bool `json:"valid"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return true
+	}
+	return result.Valid
+}

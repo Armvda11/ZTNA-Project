@@ -1,0 +1,22 @@
+[Unit]
+Description=DataVault API — ACME Corp Internal Resource (ZTNA Demo)
+After=network.target
+Documentation=https://github.com/acme/ztna-project
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/datavault/datavault_server.py --port 80
+WorkingDirectory=/opt/datavault
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=datavault
+
+# Sécurité minimale
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/datavault
+
+[Install]
+WantedBy=multi-user.target

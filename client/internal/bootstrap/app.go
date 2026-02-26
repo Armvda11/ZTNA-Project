@@ -139,22 +139,24 @@ func (a *App) RunCert(ctx context.Context) error {
 	return nil
 }
 
-// RunConnect établit un tunnel mTLS vers la Gateway pour accéder à une
-// ressource spécifique.
+// RunConnectPortForward établit un port-forward local vers une ressource
+// protégée par ZTNA. Chaque connexion sur localPort crée un nouveau tunnel
+// mTLS vers la Gateway avec cycle complet d'autorisation PEP.
 //
-// Flux prévu :
-//  1. Charger le certificat mTLS client depuis storage.path
-//  2. Construire la tls.Config avec le certificat client et la CA de confiance
-//  3. Établir une connexion TLS vers la Gateway (gateway.address)
-//  4. Envoyer une requête CONNECT avec :
-//     - action: "connect"
-//     - resource: { type, host, port } (dérivé de resourceName)
-//     - context: { src_ip, device_info, timestamp }
-//  5. Attendre la réponse de la Gateway (allow/deny)
-//  6. Si allow : relayer le trafic bidirectionnel (stdin/stdout ou port local)
-//  7. Si deny : afficher le motif et quitter
+// Utilisation :
 //
-// TODO: supporter le mode "port forwarding local" (écouter sur localhost:PORT)
+//	ztna connect http:lan-app:80 --local-port 18080
+//	curl http://127.0.0.1:18080/api/status
+func (a *App) RunConnectPortForward(ctx context.Context, resourceName string, localPort int) error {
+	a.log.Info("démarrage du port-forward ZTNA",
+		"resource", resourceName,
+		"local_port", localPort,
+	)
+	return a.connectUC.RunPortForward(ctx, resourceName, localPort)
+}
+
+// RunConnect établit un tunnel mTLS vers la Gateway en mode stdin/stdout.
+// Utilisé comme ProxyCommand SSH : ssh -o ProxyCommand="ztna connect ssh:lan-app:22" ...
 func (a *App) RunConnect(ctx context.Context, resourceName string) error {
 	a.log.Info("connexion à la ressource via tunnel mTLS", "resource", resourceName)
 
