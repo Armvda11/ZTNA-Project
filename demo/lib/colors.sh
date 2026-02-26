@@ -56,13 +56,13 @@ print_step() {
 
 print_allow() {
     echo -e "${GREEN}${BOLD}┌─────────────────────────────────┐${NC}"
-    echo -e "${GREEN}${BOLD}│   ✅  ACCÈS AUTORISÉ — ALLOW    │${NC}"
+    echo -e "${GREEN}${BOLD}│   [+]  ACCÈS AUTORISÉ — ALLOW   │${NC}"
     echo -e "${GREEN}${BOLD}└─────────────────────────────────┘${NC}"
 }
 
 print_deny() {
     echo -e "${RED}${BOLD}┌─────────────────────────────────┐${NC}"
-    echo -e "${RED}${BOLD}│   🚫  ACCÈS REFUSÉ  — DENY     │${NC}"
+    echo -e "${RED}${BOLD}│   [-]  ACCÈS REFUSÉ  — DENY    │${NC}"
     echo -e "${RED}${BOLD}└─────────────────────────────────┘${NC}"
 }
 

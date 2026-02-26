@@ -191,6 +191,6 @@ done
 
 echo -e ""
 print_ztna_banner
-echo -e "${GREEN}${BOLD}  ✅  Démonstration terminée avec succès !${NC}"
+echo -e "${GREEN}${BOLD}  [OK]  Demonstration terminee avec succes !${NC}"
 echo -e ""
 echo -e "${DIM}  Replay : make demo-reset && make demo${NC}"

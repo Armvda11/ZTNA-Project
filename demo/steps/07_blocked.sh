@@ -84,7 +84,7 @@ try:
             resp = json.loads(payload) if payload else {}
             dec = resp.get("decision", "?")
             if dec == "deny":
-                print(f"\033[0;31m  ← decision: DENY 🚫\033[0m")
+                print(f"\033[0;31m  <-- decision: DENY\033[0m")
                 print(f"  reason:   {resp.get('reason','cert révoqué')}")
             elif dec == "allow":
                 print(f"\033[1;33m  decision: ALLOW (CRL pas encore propagée à la GW)\033[0m")

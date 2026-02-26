@@ -17,7 +17,7 @@ print_step_banner "4" "CONNEXION mTLS — FLUX 2" "Client → Gateway (mTLS) →
 echo -e "${BOLD}Flux Zero Trust — mTLS + Policy Engine${NC}"
 print_separator
 print_kv "Protocole"    "mTLS TLS 1.3 — cert X.509 de l'étape 3"
-print_kv "Gateway"      "${GW_IP}:9443"
+print_kv "Gateway"      "${GW_IP}:4433"
 print_kv "Ressource"    "http:lan-app:80"
 print_kv "CP consulté"  "POST /api/v1/pep/authorize"
 print_kv "Décision"     "Politique RBAC — group:ztna-admins → allow"
@@ -45,9 +45,13 @@ python3 - <<'PYEOF'
 import ssl, socket, struct, json, sys
 
 GW_HOST = "${GW_IP}"
-GW_PORT = 4433  # port réel (config gateway.yaml : listen_addr 0.0.0.0:4433)
+GW_PORT = 4433
 CERT_FILE = "/tmp/ztna-demo/device.crt"
 KEY_FILE  = "/tmp/ztna-demo/device.key"
+
+# Ressource cible : ACME Corp Internal API sur lan-app:80
+TARGET_HOST = "lan-app"
+TARGET_PORT = 80
 
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 ctx.minimum_version = ssl.TLSVersion.TLSv1_3
@@ -58,64 +62,101 @@ ctx.verify_mode = ssl.CERT_NONE   # lab: CA auto-signée
 connect_req = json.dumps({
     "protocol_version": 1,
     "action": "connect",
-    "resource": {"type": "http", "host": "lan-app", "port": 80},
+    "resource": {"type": "http", "host": TARGET_HOST, "port": TARGET_PORT},
     "context": {"src_ip": "", "device_info": {}}
 }).encode()
 
 try:
     with socket.create_connection((GW_HOST, GW_PORT), timeout=10) as raw:
         with ctx.wrap_socket(raw) as conn:
-            # Afficher les infos TLS
             ci = conn.cipher()
-            peer = conn.getpeercert(binary_form=False) or {}
             print(f"  TLS: {ci[1] if ci else '?'}  cipher={ci[0] if ci else '?'}")
 
-            # Envoyer ConnectRequest length-prefixed
-            length = struct.pack(">I", len(connect_req))
-            conn.sendall(length + connect_req)
-            print(f"\n\033[0;36m  → ConnectRequest envoyé:\033[0m")
+            # --- 1. Envoi du ConnectRequest ---
+            conn.sendall(struct.pack(">I", len(connect_req)) + connect_req)
             req_obj = json.loads(connect_req)
+            print(f"\n\033[0;36m  --> ConnectRequest:\033[0m")
             print(f"    action:   {req_obj['action']}")
             print(f"    resource: {req_obj['resource']}")
 
-            # Lire ConnectResponse
+            # --- 2. Lecture ConnectResponse ---
             raw_len = b""
             while len(raw_len) < 4:
                 chunk = conn.recv(4 - len(raw_len))
                 if not chunk:
-                    print("\033[0;31m  Connexion fermée avant réponse\033[0m"); sys.exit(1)
+                    print("\033[0;31m  Connexion fermee avant reponse\033[0m"); sys.exit(1)
                 raw_len += chunk
             msg_len = struct.unpack(">I", raw_len)[0]
             payload = b""
             while len(payload) < msg_len:
                 chunk = conn.recv(msg_len - len(payload))
                 if not chunk:
-                    print("\033[0;31m  Connexion fermée pendant lecture réponse\033[0m"); sys.exit(1)
+                    print("\033[0;31m  Connexion fermee pendant lecture reponse\033[0m"); sys.exit(1)
                 payload += chunk
 
             resp = json.loads(payload)
-            print(f"\n\033[0;36m  ← ConnectResponse reçu:\033[0m")
-            if resp.get("decision") == "allow":
-                print(f"\033[0;32m    decision:    ALLOW ✅\033[0m")
-                print(f"    decision_id: {resp.get('decision_id','?')}")
-                print(f"    ttl_seconds: {resp.get('ttl_seconds','?')}")
-                # Envoyer une requête HTTP basique pour montrer que ça passe
-                http_req = b"GET / HTTP/1.0\r\nHost: lan-app\r\n\r\n"
-                conn.sendall(http_req)
-                http_resp = b""
-                try:
-                    while True:
-                        chunk = conn.recv(4096)
-                        if not chunk: break
-                        http_resp += chunk
-                except: pass
-                if http_resp:
-                    print(f"\n\033[0;32m  HTTP réponse de lan-app:\033[0m")
-                    print(f"  {http_resp.decode(errors='replace').splitlines()[0]}")
-            else:
-                print(f"\033[0;31m    decision: DENY 🚫\033[0m")
+            print(f"\n\033[0;36m  <-- ConnectResponse:\033[0m")
+
+            if resp.get("decision") != "allow":
+                print(f"\033[0;31m    decision: DENY\033[0m")
                 print(f"    reason:   {resp.get('reason','?')}")
                 sys.exit(1)
+
+            print(f"\033[0;32m    decision:    ALLOW\033[0m")
+            print(f"    decision_id: {resp.get('decision_id','?')}")
+            print(f"    ttl_seconds: {resp.get('ttl_seconds','?')}")
+
+            # --- 3. La connexion est maintenant un tunnel TCP transparent vers lan-app:80 ---
+            print(f"\n\033[0;36m  [ZTNA] Tunnel actif  wan-client --[mTLS]--> ztna-gw --[TCP]--> {TARGET_HOST}:{TARGET_PORT}\033[0m")
+            print(f"\033[0;36m  --> HTTP GET /api/assets (via tunnel ZTNA)\033[0m")
+
+            http_req = (
+                f"GET /api/assets HTTP/1.0\r\n"
+                f"Host: {TARGET_HOST}\r\n"
+                f"Accept: application/json\r\n"
+                f"\r\n"
+            ).encode()
+            conn.sendall(http_req)
+
+            # Lire la reponse HTTP complete
+            http_resp = b""
+            try:
+                while True:
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        break
+                    http_resp += chunk
+            except Exception:
+                pass
+
+            if not http_resp:
+                print("\033[0;31m  Aucune reponse HTTP de lan-app\033[0m")
+                sys.exit(1)
+
+            # Separer headers et body
+            parts = http_resp.split(b"\r\n\r\n", 1)
+            status_line = parts[0].splitlines()[0].decode(errors="replace")
+            body_raw = parts[1] if len(parts) > 1 else b""
+
+            print(f"\n\033[0;32m  <-- Reponse de {TARGET_HOST} (via tunnel ZTNA):\033[0m")
+            print(f"  Status  : \033[1m{status_line}\033[0m")
+            print(f"  Serveur : LAN-RESTRICTED — {TARGET_HOST}:80")
+            print()
+
+            # Afficher le JSON de facon lisible
+            try:
+                data = json.loads(body_raw)
+                print(f"  \033[1mACME Corp — Inventaire des assets internes\033[0m")
+                print(f"  Nombre d'assets : {data.get('count', '?')}")
+                print()
+                for asset in data.get("assets", []):
+                    status_color = "\033[0;32m" if asset.get("status") in ("running","active") else "\033[0;33m"
+                    print(f"  [{asset['id']:8s}] {asset['name']:20s}  type={asset['type']:12s}  env={asset['env']:12s}  {status_color}status={asset['status']}\033[0m")
+                print()
+                print(f"  \033[2mrestricted={data.get('restricted')}  queried_by={data.get('queried_by','?')}\033[0m")
+            except Exception:
+                print(body_raw.decode(errors="replace")[:800])
+
 except Exception as e:
     print(f"\033[0;31m  Erreur: {e}\033[0m")
     sys.exit(1)
