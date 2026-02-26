@@ -18,8 +18,9 @@ print_kv "Composants"     "Client • Gateway (PEP) • Control Plane (PDP)"
 print_kv "Auth"           "OIDC / Keycloak (RS256 JWT)"
 print_kv "Transport"      "mTLS TLS 1.3 — certificats X.509 courts (7j)"
 print_kv "Politique"      "RBAC séquentiel — 1er match gagne"
+print_kv "Ressource"      "DataVault API — données confidentielles ACME Corp (lan-app:80)"
 print_kv "Flux 1"         "SSH via certificat signé par SSH CA"
-print_kv "Flux 2"         "TCP via mTLS device-cert + proxy CP-autorisé"
+print_kv "Flux 2"         "TCP via mTLS device-cert + proxy CP-autorisé → DataVault"
 echo -e ""
 
 print_architecture

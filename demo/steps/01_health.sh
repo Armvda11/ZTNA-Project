@@ -65,5 +65,33 @@ else
     print_warn "Gateway inactive (journalctl -u ztna-gateway)"
 fi
 
+# DataVault sur lan-app (via jump host)
+printf "  %-30s" "DataVault lan-app:80"
+DV_STATUS=$(ssh $SSH_OPTS -J "ztna@${GW_IP}" ztna@${APP_IP} \
+    'curl -sf http://127.0.0.1/api/status 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)[\"status\"])" 2>/dev/null || echo "nok"' 2>/dev/null || echo "ssh-error")
+if [[ "$DV_STATUS" == "ok" ]]; then
+    print_ok "DataVault opérationnel"
+elif [[ "$DV_STATUS" == "ssh-error" ]]; then
+    print_warn "lan-app inaccessible — DataVault non vérifié"
+else
+    print_warn "DataVault non démarré — déploiement automatique…"
+    # Déploiement automatique si le script est disponible
+    DEPLOY_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/deploy-datavault.sh"
+    if [[ -f "$DEPLOY_SCRIPT" ]]; then
+        bash "$DEPLOY_SCRIPT" "${APP_IP}" >/dev/null 2>&1 || true
+        # Re-vérifier
+        sleep 2
+        DV_STATUS2=$(ssh $SSH_OPTS -J "ztna@${GW_IP}" ztna@${APP_IP} \
+            'curl -sf http://127.0.0.1/api/status 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)[\"status\"])" 2>/dev/null || echo "nok"' 2>/dev/null || echo "nok")
+        if [[ "$DV_STATUS2" == "ok" ]]; then
+            print_ok "DataVault déployé et opérationnel"
+        else
+            print_warn "DataVault non disponible — exécuter manuellement : ./scripts/deploy-datavault.sh"
+        fi
+    else
+        print_warn "Script deploy-datavault.sh introuvable — exécutez-le manuellement"
+    fi
+fi
+
 echo -e ""
 print_ok "Environnement vérifié — prêt pour la démo"

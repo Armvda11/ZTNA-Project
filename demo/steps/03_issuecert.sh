@@ -108,6 +108,7 @@ if scp -q ${SSH_OPTS} "${DEMO_DIR}/lib/ztna-cli.py" "ztna@${CLIENT_IP}:/tmp/ztna
 fi
 
 echo -e "${DIM}  CLI installe — utilisez depuis le terminal wan-client :${NC}"
-echo -e "${CYAN}    ztna whoami${NC}"
-echo -e "${CYAN}    ztna get /api/assets${NC}"
-echo -e "${CYAN}    ztna get /api/secrets${NC}"
+echo -e "${CYAN}    ztna whoami${NC}                        ${DIM}# Identité device${NC}"
+echo -e "${CYAN}    ztna vault records${NC}                  ${DIM}# Données confidentielles${NC}"
+echo -e "${CYAN}    ztna vault secrets${NC}                  ${DIM}# Secrets TOP SECRET${NC}"
+echo -e "${CYAN}    ztna get /api/whoami${NC}                ${DIM}# Identité connexion côté serveur${NC}"

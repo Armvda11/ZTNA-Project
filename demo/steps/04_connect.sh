@@ -20,7 +20,7 @@ echo -e "${BOLD}Zero Trust Network Access — Session persistante${NC}"
 print_separator
 print_kv "Protocole"   "mTLS TLS 1.3 — device-cert X.509 (étape 3)"
 print_kv "Gateway"     "${GW_IP}:4433"
-print_kv "Ressource"   "ACME Corp Internal API  lan-app:80"
+print_kv "Ressource"   "DataVault API  lan-app:80  (🔒 données confidentielles ACME Corp)"
 print_kv "CP"          "POST /api/v1/pep/authorize  (PEP)"
 print_kv "Politique"   "group:ztna-admins -> allow"
 print_kv "Réseau LAN"  "${APP_IP}:80  (non routable depuis WAN)"
@@ -42,11 +42,34 @@ TRY_DIRECT
 
 echo -e ""
 
-# ─── Phase 2 : session ZTNA persistante en arrière-plan ──────────────────────
-echo -e "${BOLD}Phase 2 — Avec ZTNA : worker de session en arrière-plan${NC}"
+# ─── Phase 2 : accès interactif DataVault via ztna CLI ───────────────────────
+echo -e "${BOLD}Phase 2 — Avec ZTNA : premier accès via ztna CLI${NC}"
 print_separator
-echo -e "${DIM}  Un tunnel mTLS est ouvert vers lan-app via la Gateway à chaque requête.${NC}"
-echo -e "${DIM}  Le worker tourne en arrière-plan — l'étape 06 coupera sa session en direct.${NC}"
+echo -e "${DIM}  Utilisation du device-cert de l'étape 3 → mTLS → Gateway → CP → DataVault${NC}"
+echo -e ""
+
+# Vérifier que ztna CLI est installé
+if ssh_client 'command -v ztna >/dev/null 2>&1'; then
+    print_kv "CLI ztna" "disponible sur wan-client"
+    echo -e ""
+
+    # Afficher l'identité device
+    echo -e "${INFO}Commande : ${CYAN}ztna whoami${NC}"
+    ssh_client 'ztna whoami 2>/dev/null' 2>/dev/null | sed 's/^/  /' || true
+    echo -e ""
+
+    # Accéder aux enregistrements confidentiels
+    echo -e "${INFO}Commande : ${CYAN}ztna vault records${NC}"
+    ssh_client 'ztna vault records 2>/dev/null' 2>/dev/null | sed 's/^/  /' || \
+        print_warn "ztna vault records échoué — vérifier DataVault sur lan-app"
+    echo -e ""
+fi
+
+# ─── Phase 3 : session ZTNA persistante en arrière-plan ──────────────────────
+echo -e "${BOLD}Phase 3 — Session ZTNA persistante en arrière-plan${NC}"
+print_separator
+echo -e "${DIM}  Le worker ouvre un nouveau tunnel pour chaque endpoint (multi-endpoints).${NC}"
+echo -e "${DIM}  Il tourne en arrière-plan — l'étape 06 coupera sa session en direct.${NC}"
 echo -e ""
 
 # Copier le script Python worker sur wan-client
@@ -134,42 +157,82 @@ log(f"\033[0;32m  Tunnel TCP ouvert :\033[0m {GW_HOST}:{GW_PORT} → {TARGET}:80
 log(f"\033[0;33m  Session active — requêtes toutes les 3s (Ctrl+C ou étape 06 pour couper)…\033[0m")
 log("")
 
-http_req = (
-    f"GET /api/status HTTP/1.1\r\nHost: {TARGET}\r\n"
-    "Connection: keep-alive\r\n\r\n"
-).encode()
+# Endpoints DataVault à cycler pour une démo visuellement riche
+ENDPOINTS = [
+    "/api/status",
+    "/api/vault/records",
+    "/api/vault/secrets",
+    "/api/whoami",
+]
+ep_idx = 0
+
+def make_request(endpoint):
+    return (
+        f"GET {endpoint} HTTP/1.0\r\nHost: {TARGET}\r\nConnection: close\r\n\r\n"
+    ).encode()
+
+def fmt_response(endpoint, body, iteration):
+    """Formate la réponse DataVault pour le log de la démo."""
+    t = time.strftime("%H:%M:%S")
+    ep_label = endpoint.split("/")[-1] or "status"
+    if "/status" in endpoint:
+        host_v   = body.get("host", TARGET)
+        uptime_v = body.get("uptime_s", "?")
+        reqs     = body.get("requests_served","?")
+        return (f"  \033[0;32m[{iteration:03d}]\033[0m  \033[0;36m{ep_label:12s}\033[0m  "
+                f"host={host_v}  uptime={uptime_v}s  req={reqs}  t={t}")
+    elif "records" in endpoint:
+        count   = body.get("count", len(body.get("records",[])))
+        classif = body.get("classification","CONFIDENTIEL").replace("🔒 ","")
+        notice  = body.get("notice","")[:40]
+        return (f"  \033[0;32m[{iteration:03d}]\033[0m  \033[0;33m{ep_label:12s}\033[0m  "
+                f"{classif}  {count} enregistrements  t={t}")
+    elif "secrets" in endpoint:
+        count   = body.get("count", len(body.get("secrets",[])))
+        classif = body.get("classification","TOP SECRET").replace("🔐 ","")
+        return (f"  \033[0;32m[{iteration:03d}]\033[0m  \033[0;31m{ep_label:12s}\033[0m  "
+                f"{classif}  {count} secrets  t={t}")
+    elif "whoami" in endpoint:
+        src = body.get("source_ip","?")
+        host_v = body.get("host","?")
+        return (f"  \033[0;32m[{iteration:03d}]\033[0m  \033[0;36m{ep_label:12s}\033[0m  "
+                f"source_ip={src}  host={host_v}  t={t}")
+    else:
+        return f"  \033[0;32m[{iteration:03d}]\033[0m  {ep_label:12s}  t={t}"
 
 iteration = 0
 start     = time.time()
 
 while time.time() - start < MAX_SEC:
     iteration += 1
+    endpoint = ENDPOINTS[ep_idx % len(ENDPOINTS)]
     try:
         conn.settimeout(10)
-        conn.sendall(http_req)
+        conn.sendall(make_request(endpoint))
         raw_resp = b""
         conn.settimeout(8)
         while True:
             chunk = conn.recv(4096)
             if not chunk:
-                # EOF — HTTP/1.0 ferme après réponse → reconnecter
+                # EOF — HTTP/1.0 ferme après chaque réponse → reconnecter
                 raise EOFError("HTTP/1.0 EOF")
             raw_resp += chunk
             if b"\r\n\r\n" in raw_resp:
                 break
 
-        status = raw_resp.split(b"\r\n")[0].decode(errors="replace")
         body_raw = raw_resp.split(b"\r\n\r\n", 1)[1] if b"\r\n\r\n" in raw_resp else b""
         try:
-            data     = json.loads(body_raw)
-            host_v   = data.get("host", TARGET)
-            uptime_v = data.get("uptime_s", "?")
-            log(f"  \033[0;32m[{iteration:03d}]\033[0m {status:<25s}  host={host_v}  uptime={uptime_v}s  t={time.strftime('%H:%M:%S')}")
+            data = json.loads(body_raw)
+            log(fmt_response(endpoint, data, iteration))
         except Exception:
-            log(f"  \033[0;32m[{iteration:03d}]\033[0m {status}  t={time.strftime('%H:%M:%S')}")
+            status = raw_resp.split(b"\r\n")[0].decode(errors="replace")
+            log(f"  \033[0;32m[{iteration:03d}]\033[0m  {endpoint}  {status}  t={time.strftime('%H:%M:%S')}")
+
+        ep_idx += 1
 
     except EOFError:
         # HTTP/1.0 : le serveur ferme après chaque réponse → reconnecter silencieusement
+        ep_idx += 1
         try:
             conn.close()
         except Exception:
@@ -270,4 +333,6 @@ fi
 echo -e ""
 echo -e "${YELLOW}${BOLD}  → Le worker continue de tourner — l'étape 06 le coupera en direct.${NC}"
 echo -e "${DIM}  Log visible sur wan-client : tail -f /tmp/ztna-session.log${NC}"
-echo -e "${DIM}  Accès manuel : ztna connect http:lan-app:80 --local-port 18080${NC}"
+echo -e "${DIM}  Accès CLI   : ztna vault records${NC}"
+echo -e "${DIM}               ztna vault secrets${NC}"
+echo -e "${DIM}               ztna get /api/whoami${NC}"

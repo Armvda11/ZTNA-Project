@@ -277,9 +277,16 @@ demo-narrator:
 	@source ./demo/lib/colors.sh && source ./demo/lib/banner.sh && run_narrator
 
 demo-reset:
-	@$(SSH) ztna@$(CLIENT_IP) 'rm -f /tmp/ztna-demo/access_token.txt /tmp/ztna-demo/device.crt /tmp/ztna-demo/device.key /tmp/ztna-demo/ssh_ztna_demo*' 2>/dev/null || true
-	@rm -rf /tmp/ztna-demo/
-	@echo "$(GREEN)[✓]$(NC) État de démo réinitialisé"
+	# Tuer le worker de session actif sur wan-client (s'il tourne encore)
+	@$(SSH) ztna@$(CLIENT_IP) \
+	  'kill $$(cat /tmp/ztna-session.pid 2>/dev/null) 2>/dev/null; \
+	   rm -f /tmp/ztna-session.pid /tmp/ztna-session.log /tmp/ztna-worker.py \
+	          /tmp/ztna-demo/access_token.txt /tmp/ztna-demo/device.crt \
+	          /tmp/ztna-demo/device.key /tmp/ztna-demo/ssh_ztna_demo* \
+	          /tmp/ztna-demo/device_cert_serial.txt /tmp/ztna-demo/cp_api.txt \
+	          /tmp/ztna-demo/gw_addr.txt' 2>/dev/null || true
+	@rm -rf /tmp/ztna-demo/ /tmp/ztna-demo-*.json
+	@echo "$(GREEN)[✓]$(NC) État de démo réinitialisé (worker arrêté, tokens supprimés)"
 
 # ============================================================================
 # DEV (OPTIONNEL)

@@ -119,7 +119,7 @@ GW_HOST = "${GW_IP}"
 GW_PORT = 4433
 CERT_FILE = "/tmp/ztna-demo/device.crt"
 KEY_FILE  = "/tmp/ztna-demo/device.key"
-ENDPOINT  = "/api/secrets"
+ENDPOINT  = "/api/vault/secrets"
 
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 ctx.minimum_version = ssl.TLSVersion.TLSv1_3
@@ -134,7 +134,7 @@ req = json.dumps({
 }).encode()
 
 print(f"  wan-client  -->  ztna-gw:4433 (mTLS)  -->  CP/authorize  -->  lan-app:80")
-print(f"  --> ConnectRequest  GET {ENDPOINT}")
+print(f"  --> ConnectRequest  GET {ENDPOINT}  [cert RÉVOQU\u00c9]")
 
 try:
     with socket.create_connection((GW_HOST, GW_PORT), timeout=30) as raw:
