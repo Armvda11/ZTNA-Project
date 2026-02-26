@@ -99,56 +99,15 @@ ENDSSH
 echo -e ""
 print_ok "Device-cert obtenu — mTLS possible vers la Gateway"
 
-# ─── Déployer le script d'accès manuel sur wan-client ────────────────────────
-echo -e "${DIM}  Deploiement de l'outil d'acces manuel sur wan-client…${NC}"
+# ─── Déployer le CLI ztna sur wan-client ────────────────────────────────
+echo -e "${DIM}  Installation du CLI ztna sur wan-client…${NC}"
 
-cat > /tmp/ztna-connect.py << 'PYEOF'
-import ssl, socket, struct, json, sys
+# Copier le CLI Python sur wan-client puis l'installer dans /usr/local/bin
+if scp -q ${SSH_OPTS} "${DEMO_DIR}/lib/ztna-cli.py" "ztna@${CLIENT_IP}:/tmp/ztna-demo/ztna" 2>/dev/null; then
+    ssh_client "sudo install -m 755 /tmp/ztna-demo/ztna /usr/local/bin/ztna" 2>/dev/null || true
+fi
 
-GW_HOST   = open("/tmp/ztna-demo/gw_addr.txt").read().split(":")[0].strip()
-GW_PORT   = 4433
-CERT_FILE = "/tmp/ztna-demo/device.crt"
-KEY_FILE  = "/tmp/ztna-demo/device.key"
-TARGET    = "lan-app"
-ENDPOINT  = sys.argv[1] if len(sys.argv) > 1 else "/api/status"
-
-ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-ctx.minimum_version = ssl.TLSVersion.TLSv1_3
-ctx.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
-ctx.check_hostname = False
-ctx.verify_mode    = ssl.CERT_NONE
-
-req = json.dumps({"protocol_version":1,"action":"connect",
-    "resource":{"type":"http","host":TARGET,"port":80},
-    "context":{"src_ip":"","device_info":{}}}).encode()
-
-try:
-    with socket.create_connection((GW_HOST, GW_PORT), timeout=10) as raw:
-        with ctx.wrap_socket(raw) as conn:
-            conn.sendall(struct.pack(">I", len(req)) + req)
-            rl = b""
-            while len(rl) < 4: rl += conn.recv(4 - len(rl))
-            ml = struct.unpack(">I", rl)[0]
-            p = b""
-            while len(p) < ml: p += conn.recv(ml - len(p))
-            resp = json.loads(p)
-            if resp.get("decision") != "allow":
-                print(f"DENY  reason={resp.get('reason','?')}")
-                sys.exit(1)
-            print(f"ALLOW  decision_id={resp.get('decision_id','?')}")
-            conn.sendall(f"GET {ENDPOINT} HTTP/1.0\r\nHost: {TARGET}\r\n\r\n".encode())
-            data = b""
-            while True:
-                chunk = conn.recv(4096)
-                if not chunk: break
-                data += chunk
-            header, body = data.split(b"\r\n\r\n", 1)
-            print(header.splitlines()[0].decode())
-            print(json.dumps(json.loads(body), indent=2, ensure_ascii=False))
-except Exception as e:
-    print(f"Erreur: {e}"); sys.exit(1)
-PYEOF
-
-scp -q ${SSH_OPTS} /tmp/ztna-connect.py ztna@${CLIENT_IP}:/tmp/ztna-demo/ztna-connect.py 2>/dev/null || true
-rm -f /tmp/ztna-connect.py
-echo -e "${DIM}  Script disponible: python3 /tmp/ztna-demo/ztna-connect.py /api/assets${NC}"
+echo -e "${DIM}  CLI installe — utilisez depuis le terminal wan-client :${NC}"
+echo -e "${CYAN}    ztna whoami${NC}"
+echo -e "${CYAN}    ztna get /api/assets${NC}"
+echo -e "${CYAN}    ztna get /api/secrets${NC}"

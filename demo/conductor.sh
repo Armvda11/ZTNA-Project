@@ -27,7 +27,7 @@ MODE="manual"
 AUTO_DELAY=6
 FROM_STEP=0
 TO_STEP=7
-SKIP_STEPS=""
+SKIP_STEPS="5"   # Flux 1 SSH desactive par defaut — focus sur acces ressource (Flux 2)
 SHOW_HELP=false
 
 # ─── Parser les arguments ────────────────────────────────────────────────────
@@ -71,9 +71,9 @@ declare -A STEP_NAMES=(
     [1]="Health Check"
     [2]="Authentification OIDC"
     [3]="Émission Device-Cert (X.509)"
-    [4]="Connexion mTLS — Flux 2"
-    [5]="SSH via Certificat — Flux 1"
-    [6]="Révocation du Cert (CRL)"
+    [4]="Acces Ressource — ZTNA Flux 2"
+    [5]="SSH via Certificat — Flux 1 (desactive)"
+    [6]="Revocation du Cert (CRL)"
     [7]="Zero Trust en Action — DENY"
 )
 

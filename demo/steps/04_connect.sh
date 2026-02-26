@@ -180,8 +180,10 @@ print_allow
 echo -e ""
 print_ok "Flux ZTNA complet — identite verifiee, ressource interne accessible"
 echo -e ""
-echo -e "${DIM}  Acces manuel depuis le terminal wan-client :${NC}"
-echo -e "${DIM}    python3 /tmp/ztna-demo/ztna-connect.py /api/status${NC}"
-echo -e "${DIM}    python3 /tmp/ztna-demo/ztna-connect.py /api/assets${NC}"
+echo -e "${BOLD}  Acces manuel depuis le terminal wan-client :${NC}"
+echo -e "${CYAN}    ztna whoami${NC}"
+echo -e "${CYAN}    ztna status${NC}"
+echo -e "${CYAN}    ztna get /api/assets${NC}"
+echo -e "${CYAN}    ztna get /api/secrets${NC}"
 echo -e "${DIM}    python3 /tmp/ztna-demo/ztna-connect.py /api/secrets${NC}"
 
