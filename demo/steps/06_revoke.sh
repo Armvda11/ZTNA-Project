@@ -4,7 +4,7 @@
 #
 # Un administrateur révoque le certificat X.509 du device via l'API admin du CP.
 # Le CP met à jour sa CRL (Certificate Revocation List).
-# La Gateway rechargera la CRL lors de la prochaine connexion.
+# La Gateway est redémarrée après la révocation → rechargement immédiat de la CRL.
 # =============================================================================
 set -uo pipefail
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,7 +17,7 @@ print_step_banner "6" "RÉVOCATION DU CERT (CRL)" "Un admin révoque le device-c
 echo -e "${BOLD}Scénario : device compromis ou sortie d'employé${NC}"
 print_separator
 print_kv "Action admin"    "DELETE /api/v1/admin/device-certs/{serial}"
-print_kv "Effet"           "Cert ajouté à la CRL — aucune nouvelle session"
+print_kv "Effet"           "Cert ajouté à la CRL → Gateway redémarrée → CRL chargée immédiatement"
 print_kv "Portée"          "Certificat de l'étape 3"
 print_kv "Authentification" "Bearer JWT + groupe ztna-admins"
 echo -e ""
@@ -76,6 +76,21 @@ else
     print_err "Échec de la révocation (HTTP ${HTTP_STATUS})"
     echo "${RESP_BODY}"
     exit 1
+fi
+
+echo -e ""
+
+# Forcer le rechargement immédiat de la CRL sur la Gateway
+echo -e "${INFO}Forçage du rechargement CRL sur la Gateway…${NC}"
+ssh_gw "sudo systemctl restart ztna-gateway" 2>/dev/null
+sleep 3
+# Vérifier que la gateway a redémarré
+GW_STATE=$(ssh_gw "systemctl is-active ztna-gateway 2>/dev/null" 2>/dev/null || echo "unknown")
+if [[ "$GW_STATE" == "active" ]]; then
+    print_ok "Gateway redémarrée — CRL rechargée immédiatement (serial blacklisté)"
+else
+    print_warn "État gateway : ${GW_STATE} — attente 3s supplémentaires"
+    sleep 3
 fi
 
 echo -e ""

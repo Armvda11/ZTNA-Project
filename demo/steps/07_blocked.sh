@@ -46,7 +46,57 @@ else
 fi
 echo -e ""
 
-echo -e "${YELLOW}${BOLD}2. Tentative d'acces a /api/secrets avec le cert revoque…${NC}"
+echo -e "${YELLOW}${BOLD}2. Attente propagation CRL vers la Gateway…${NC}"
+print_separator
+echo -e "${DIM}  La Gateway a été redémarrée à l'étape 6 — CRL déjà chargée.${NC}"
+echo -e "${DIM}  Sonde de confirmation (max 15s)…${NC}"
+
+# Deployer le script de sonde sur wan-client
+cat > /tmp/ztna-probe.py << 'EOFILE'
+import ssl, socket, struct, json, sys
+gw = sys.argv[1] if len(sys.argv) > 1 else "10.10.10.20"
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+ctx.load_cert_chain(certfile="/tmp/ztna-demo/device.crt", keyfile="/tmp/ztna-demo/device.key")
+ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+req = json.dumps({"protocol_version":1,"action":"connect","resource":{"type":"http","host":"lan-app","port":80},"context":{}}).encode()
+try:
+    with socket.create_connection((gw, 4433), timeout=5) as r:
+        with ctx.wrap_socket(r) as c:
+            c.sendall(struct.pack(">I",len(req))+req)
+            rl=b""
+            while len(rl)<4: rl+=c.recv(4-len(rl))
+            ml=struct.unpack(">I",rl)[0]; p=b""
+            while len(p)<ml: p+=c.recv(ml-len(p))
+            print(json.loads(p).get("decision","?"))
+except: print("error")
+EOFILE
+scp -q ${SSH_OPTS} /tmp/ztna-probe.py ztna@${CLIENT_IP}:/tmp/ztna-demo/ztna-probe.py 2>/dev/null || true
+rm -f /tmp/ztna-probe.py
+
+# Attendre que la Gateway propage la CRL (max 15s, sondage toutes les 3s)
+WAIT_MAX=15
+WAIT_START=$(date +%s)
+while true; do
+    NOW=$(date +%s)
+    ELAPSED=$(( NOW - WAIT_START ))
+    if [[ $ELAPSED -ge $WAIT_MAX ]]; then
+        print_warn "CRL non confirmée après ${WAIT_MAX}s — le test final décidera"
+        break
+    fi
+    # Sonde rapide : si la GW renvoie DENY c'est bon
+    PROBE=$(ssh_client "python3 /tmp/ztna-demo/ztna-probe.py ${GW_IP}" 2>/dev/null || echo "error")
+    REMAINING=$(( WAIT_MAX - ELAPSED ))
+    if [[ "$PROBE" == "deny" ]]; then
+        print_ok "CRL propagee — Gateway refuse le cert revoque (${ELAPSED}s)"
+        break
+    fi
+    printf "\r  ${DIM}[%2ds] Gateway: %s — attente propagation CRL…${NC}  " "$ELAPSED" "$PROBE"
+    sleep 3
+done
+echo -e ""
+
+echo -e "${YELLOW}${BOLD}3. Tentative d'acces a /api/secrets avec le cert revoque…${NC}"
 print_separator
 
 ssh_client bash <<ENDSSH

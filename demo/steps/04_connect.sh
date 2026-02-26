@@ -8,9 +8,10 @@
 #   3. Trois appels API réels (status, assets, secrets) — chacun = 1 cycle ZTNA
 #
 # ACCÈS MANUEL depuis le terminal wan-client :
-#   python3 /tmp/ztna-demo/ztna-connect.py /api/status
-#   python3 /tmp/ztna-demo/ztna-connect.py /api/assets
-#   python3 /tmp/ztna-demo/ztna-connect.py /api/secrets
+#   ztna whoami
+#   ztna get /api/status
+#   ztna get /api/assets
+#   ztna get /api/secrets
 # =============================================================================
 set -uo pipefail
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -185,5 +186,4 @@ echo -e "${CYAN}    ztna whoami${NC}"
 echo -e "${CYAN}    ztna status${NC}"
 echo -e "${CYAN}    ztna get /api/assets${NC}"
 echo -e "${CYAN}    ztna get /api/secrets${NC}"
-echo -e "${DIM}    python3 /tmp/ztna-demo/ztna-connect.py /api/secrets${NC}"
 
