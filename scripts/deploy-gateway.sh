@@ -229,7 +229,15 @@ echo "✓ SSH CA configurée sur lan-admin"
 REMOTE
 
 # ──────────────────────────────────────────────────────────────────────────────
-step "7. Vérification finale"
+step "7. Routage WAN→DMZ (ip_forward + iptables Keycloak/CP)"
+# ──────────────────────────────────────────────────────────────────────────────
+log "Configuration du routage sur ztna-gw (nécessaire pour OIDC depuis wan-client)..."
+cat "$(dirname "${BASH_SOURCE[0]}")/setup-gw-routing.sh" | \
+  ${SSH} -o BatchMode=yes ${USER}@${GW_HOST} 'bash --norc -s' 2>&1 | grep -E "✓|✗|===" || true
+log "✓ Routage WAN→DMZ configuré"
+
+# ──────────────────────────────────────────────────────────────────────────────
+step "8. Vérification finale"
 # ──────────────────────────────────────────────────────────────────────────────
 log "Status du service ztna-gateway..."
 ${SSH} ${USER}@${GW_HOST} "sudo systemctl status ztna-gateway --no-pager -l | head -20"

@@ -161,7 +161,8 @@ log "    ESTABLISHED,RELATED                              (retour)"
 for src_ip in "${SOURCE_IPS[@]}"; do
   src_ip="$(echo "${src_ip}" | xargs)"
   [[ -z "${src_ip}" ]] && continue
-  log "    ${src_ip} → ${CP_IP}:${KC_PORT}/tcp          (Keycloak OIDC)"
+  log "    ${src_ip} → ${CP_IP}:${KC_HTTP_PORT}/tcp          (Keycloak HTTP)"
+  log "    ${src_ip} → ${CP_IP}:${KC_HTTPS_PORT}/tcp          (Keycloak HTTPS)"
   log "    ${src_ip} → ${CP_IP}:${CP_PORT}/tcp          (Control Plane)"
 done
 log "  FORWARD explicitement bloqué :"

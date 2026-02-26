@@ -329,5 +329,5 @@ test-flux2-local:
 
 # Conservé pour compatibilité avec docs/tests existants.
 setup-routing:
-	@$(SSH) ztna@$(GW_IP) 'bash -s' < ./scripts/setup-gw-routing.sh
+	@cat ./scripts/setup-gw-routing.sh | $(SSH) -o BatchMode=yes ztna@$(GW_IP) 'bash --norc -s'
 	@echo "$(GREEN)[✓]$(NC) Routage WAN→DMZ configuré"
