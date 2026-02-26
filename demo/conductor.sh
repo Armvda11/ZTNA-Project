@@ -140,7 +140,7 @@ echo -e ""
 # Préparer les répertoires partagés
 mkdir -p /tmp/ztna-demo
 echo "$CP_API"   > /tmp/ztna-demo/cp_api.txt
-echo "$GW_IP:9443" > /tmp/ztna-demo/gw_addr.txt
+echo "$GW_IP:4433" > /tmp/ztna-demo/gw_addr.txt
 
 TOTAL_STEPS=$(( TO_STEP - FROM_STEP + 1 ))
 CURRENT=0
