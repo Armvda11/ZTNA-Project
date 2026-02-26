@@ -12,7 +12,8 @@
         vm-start vm-stop vm-force-stop vm-reboot vm-console \
         logs-cp logs-gw clean \
         build-cp build-gw build-cli test-unit test certs \
-        init check-requirements plan apply test-flux2-local setup-routing
+        init check-requirements plan apply test-flux2-local setup-routing \
+        demo demo-auto demo-reset demo-narrator
 
 PROJECT_DIR   := $(shell pwd)
 TERRAFORM_DIR := $(PROJECT_DIR)/lab/terraform
@@ -23,6 +24,9 @@ GW_IP     := 10.10.10.20
 CLIENT_IP := 10.10.10.10
 APP_IP    := 10.10.30.10
 ADMIN_IP  := 10.10.30.11
+
+DELAY ?= 6
+FROM  ?= 0
 
 SSH   := ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i $(SSH_KEY)
 SSH_J := $(SSH) -J ztna@$(GW_IP)
@@ -81,6 +85,13 @@ help:
 	@echo "  make build-cp | build-gw | build-cli | test-unit | test | certs"
 	@echo ""
 	@echo "$(BLUE)Compatibilité legacy:$(NC) init, check-requirements, plan, apply, test-flux2-local"
+	@echo ""
+	@echo "$(YELLOW)Démo soutenance$(NC)"
+	@echo "  make demo               Démo live multi-terminaux GNOME (mode manuel)"
+	@echo "  make demo-auto          Démo automatique (DELAY=$(DELAY) sec entre étapes)"
+	@echo "  make demo-auto DELAY=3  Démo automatique cadence rapide"
+	@echo "  make demo-narrator      Panneau narrateur seul (terminal dédié)"
+	@echo "  make demo-reset         Réinitialiser l'état de la démo"
 
 # ============================================================================
 # ONBOARDING
@@ -245,6 +256,26 @@ clean:
 	@rm -rf $(TERRAFORM_DIR)/.terraform/
 	@rm -rf /tmp/ztna-*
 	@echo "$(GREEN)[✓]$(NC) Nettoyage terminé"
+
+# ============================================================================
+# DEMO (soutenance)
+# ============================================================================
+
+demo:
+	@chmod +x ./demo/run.sh ./demo/conductor.sh ./demo/steps/*.sh ./demo/lib/*.sh 2>/dev/null || true
+	@bash ./demo/run.sh --mode manual
+
+demo-auto:
+	@chmod +x ./demo/run.sh ./demo/conductor.sh ./demo/steps/*.sh ./demo/lib/*.sh 2>/dev/null || true
+	@bash ./demo/run.sh --mode auto --delay $(DELAY)
+
+demo-narrator:
+	@source ./demo/lib/colors.sh && source ./demo/lib/banner.sh && run_narrator
+
+demo-reset:
+	@$(SSH) ztna@$(CLIENT_IP) 'rm -f /tmp/ztna-demo/access_token.txt /tmp/ztna-demo/device.crt /tmp/ztna-demo/device.key /tmp/ztna-demo/ssh_ztna_demo*' 2>/dev/null || true
+	@rm -rf /tmp/ztna-demo/
+	@echo "$(GREEN)[✓]$(NC) État de démo réinitialisé"
 
 # ============================================================================
 # DEV (OPTIONNEL)

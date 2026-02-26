@@ -19,6 +19,14 @@
 // TODO: Ajouter un numéro de version du protocole
 package protocol
 
+import (
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+)
+
 // ConnectRequest est la requête envoyée par le client à la Gateway.
 type ConnectRequest struct {
 	// ProtocolVersion permet la négociation de version future
@@ -64,20 +72,61 @@ type ConnectResponse struct {
 	TTLSeconds int `json:"ttl_seconds,omitempty"`
 }
 
-// TODO: Implémenter les fonctions de framing :
-//
-//   const MaxMessageSize = 64 * 1024 // 64 KB max par message
-//
-//   // WriteMessage encode un message en JSON et l'envoie avec le préfixe de longueur.
-//   func WriteMessage(conn net.Conn, msg any) error {
-//       data, err := json.Marshal(msg)
-//       // Vérifier len(data) <= MaxMessageSize
-//       // Écrire [4 bytes big-endian len][data]
-//   }
-//
-//   // ReadMessage lit un message length-prefixed et le décode en JSON.
-//   func ReadMessage(conn net.Conn, dest any) error {
-//       // Lire 4 bytes → longueur
-//       // Vérifier longueur <= MaxMessageSize
-//       // Lire N bytes → json.Unmarshal
-//   }
+// MaxMessageSize limite la taille des messages pour protéger contre les
+// clients malveillants qui enverraient des messages démesuré.
+const MaxMessageSize = 1 * 1024 * 1024 // 1 Mo
+
+// CurrentProtocolVersion est la version courante du protocole CONNECT.
+const CurrentProtocolVersion = 1
+
+// WriteMessage encode msg en JSON et l'envoie avec un préfixe de longueur
+// [4 bytes big-endian uint32][JSON].
+func WriteMessage(conn net.Conn, msg any) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("impossible d'encoder le message en JSON: %w", err)
+	}
+	if len(data) > MaxMessageSize {
+		return fmt.Errorf("message trop grand: %d octets (max %d)", len(data), MaxMessageSize)
+	}
+
+	// Écrire la longueur (4 bytes big-endian)
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(data)))
+	if _, err := conn.Write(lenBuf[:]); err != nil {
+		return fmt.Errorf("impossible d'écrire la longueur: %w", err)
+	}
+
+	// Écrire le payload JSON
+	if _, err := conn.Write(data); err != nil {
+		return fmt.Errorf("impossible d'écrire le payload: %w", err)
+	}
+	return nil
+}
+
+// ReadMessage lit un message length-prefixed et le décode en JSON dans dest.
+func ReadMessage(conn net.Conn, dest any) error {
+	// Lire les 4 bytes de longueur
+	var lenBuf [4]byte
+	if _, err := io.ReadFull(conn, lenBuf[:]); err != nil {
+		return fmt.Errorf("impossible de lire la longueur: %w", err)
+	}
+	msgLen := binary.BigEndian.Uint32(lenBuf[:])
+	if msgLen == 0 {
+		return fmt.Errorf("longueur du message nulle")
+	}
+	if int(msgLen) > MaxMessageSize {
+		return fmt.Errorf("message trop grand: %d octets (max %d)", msgLen, MaxMessageSize)
+	}
+
+	// Lire le payload JSON
+	payload := make([]byte, msgLen)
+	if _, err := io.ReadFull(conn, payload); err != nil {
+		return fmt.Errorf("impossible de lire le payload: %w", err)
+	}
+
+	if err := json.Unmarshal(payload, dest); err != nil {
+		return fmt.Errorf("impossible de décoder le message JSON: %w", err)
+	}
+	return nil
+}

@@ -113,7 +113,7 @@ func (c *Client) RequestMTLSCertFromCP(accessToken string) error {
 		return fmt.Errorf("impossible de sérialiser la requête: %w", err)
 	}
 
-	cpURL := strings.TrimRight(c.cfg.ControlPlane.BaseURL, "/") + "/api/v1/credentials/mtls-cert"
+	cpURL := strings.TrimRight(c.cfg.ControlPlane.BaseURL, "/") + "/api/v1/credentials/device-cert"
 	httpReq, err := http.NewRequest(http.MethodPost, cpURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("impossible de construire la requête HTTP: %w", err)

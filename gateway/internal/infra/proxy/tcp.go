@@ -12,8 +12,11 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"sync"
+	"time"
 
 	"ztna-gateway/internal/config"
 )
@@ -56,26 +59,84 @@ func NewTCPProxy(cfg *config.Config, log *slog.Logger) *TCPProxy {
 //   - Respect du contexte pour arrêt forcé (shutdown)
 //   - Journalisation en fin de session : durée, bytes, erreurs
 func (p *TCPProxy) Proxy(ctx context.Context, clientConn net.Conn, targetHost string, targetPort int) error {
+	if err := validateTarget(targetHost, targetPort); err != nil {
+		return fmt.Errorf("cible invalide: %w", err)
+	}
+
 	target := fmt.Sprintf("%s:%d", targetHost, targetPort)
 	p.log.Info("ouverture de la connexion vers la ressource cible", "target", target)
 
-	// TODO: établir la connexion vers la cible avec timeout
-	//   dialer := &net.Dialer{Timeout: p.cfg.DialTimeoutDuration()}
-	//   targetConn, err := dialer.DialContext(ctx, "tcp", target)
+	dialTimeout := p.cfg.DialTimeoutDuration()
+	if dialTimeout == 0 {
+		dialTimeout = 10 * time.Second
+	}
+	dialer := &net.Dialer{Timeout: dialTimeout}
+	targetConn, err := dialer.DialContext(ctx, "tcp", target)
+	if err != nil {
+		return fmt.Errorf("impossible de joindre la ressource %s: %w", target, err)
+	}
+	defer targetConn.Close()
 
-	// TODO: lancer le relais bidirectionnel
-	//   errCh := make(chan error, 2)
-	//   go func() { _, err := io.Copy(targetConn, clientConn); errCh <- err }()
-	//   go func() { _, err := io.Copy(clientConn, targetConn); errCh <- err }()
+	p.log.Info("connexion cible établie, démarrage du relais bidirectionnel", "target", target)
+	start := time.Now()
 
-	// TODO: attendre la fin et fermer proprement
-	//   err := <-errCh  // première direction terminée
-	//   // half-close : fermer le write de l'autre côté
-	//   // attendre la seconde goroutine
+	var (
+		mu           sync.Mutex
+		bytesSent    int64
+		bytesReceived int64
+	)
 
-	// TODO: journaliser les statistiques de fin de session
+	errc := make(chan error, 2)
 
-	return fmt.Errorf("TODO: Proxy non implémenté")
+	// Client → Cible
+	go func() {
+		n, err := io.Copy(targetConn, clientConn)
+		mu.Lock()
+		bytesSent = n
+		mu.Unlock()
+		// Half-close : signal EOF vers la cible
+		if tc, ok := targetConn.(*net.TCPConn); ok {
+			tc.CloseWrite() //nolint:errcheck
+		}
+		errc <- err
+	}()
+
+	// Cible → Client
+	go func() {
+		n, err := io.Copy(clientConn, targetConn)
+		mu.Lock()
+		bytesReceived = n
+		mu.Unlock()
+		// Half-close : signal EOF vers le client
+		if tc, ok := clientConn.(*net.TCPConn); ok {
+			tc.CloseWrite() //nolint:errcheck
+		}
+		errc <- err
+	}()
+
+	// Attendre la fin des deux directions (ou l'annulation du contexte)
+	var firstErr error
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-errc:
+			if firstErr == nil && err != nil {
+				firstErr = err
+			}
+		case <-ctx.Done():
+			targetConn.Close()
+			clientConn.Close()
+		}
+	}
+
+	duration := time.Since(start)
+	p.log.Info("session de proxy terminée",
+		"target", target,
+		"duration_ms", duration.Milliseconds(),
+		"bytes_sent", bytesSent,
+		"bytes_received", bytesReceived,
+	)
+
+	return firstErr
 }
 
 // validateTarget vérifie que l'adresse cible est une adresse réseau

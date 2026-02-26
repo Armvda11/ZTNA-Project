@@ -12,14 +12,16 @@
 package mtls
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 
 	"ztna-gateway/internal/config"
-	"ztna-gateway/internal/infra/tls"
+	tlsutil "ztna-gateway/internal/infra/tls"
 )
 
 // ConnectionHandler est l'interface que doit implémenter le handler de
@@ -78,15 +80,9 @@ func (l *Listener) buildTLSConfig() (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-// Listen démarre l'écoute mTLS sur l'adresse configurée.
-//
-// TODO: Implémenter la boucle d'acceptation :
-//   - Accepter chaque connexion TLS
-//   - Extraire le certificat client depuis conn.ConnectionState()
-//   - Passer la connexion au handler pour traitement
-//   - Gérer les erreurs de handshake TLS (journaliser sans crasher)
-//   - Respecter le contexte pour l'arrêt graceful
-func (l *Listener) Listen() error {
+// Listen démarre l'écoute mTLS sur l'adresse configurée et accepte les
+// connexions entrantes jusqu'à l'annulation du contexte.
+func (l *Listener) Listen(ctx context.Context) error {
 	tlsConfig, err := l.buildTLSConfig()
 	if err != nil {
 		return fmt.Errorf("erreur de configuration TLS: %w", err)
@@ -97,23 +93,61 @@ func (l *Listener) Listen() error {
 		return fmt.Errorf("impossible de démarrer le listener TLS sur %s: %w", l.cfg.Server.ListenAddr, err)
 	}
 	l.ln = ln
-
 	l.log.Info("listener mTLS démarré", "addr", l.cfg.Server.ListenAddr)
 
-	// TODO: boucle d'acceptation des connexions
-	//   for {
-	//       conn, err := ln.Accept()
-	//       if err != nil { /* vérifier si c'est un arrêt normal */ }
-	//       tlsConn := conn.(*tls.Conn)
-	//       // Le handshake est automatique mais on peut le forcer :
-	//       // if err := tlsConn.Handshake(); err != nil { log + close + continue }
-	//       state := tlsConn.ConnectionState()
-	//       if len(state.PeerCertificates) == 0 { /* ne devrait pas arriver avec RequireAndVerify */ }
-	//       clientCert := state.PeerCertificates[0]
-	//       go l.handler.HandleConnection(conn, clientCert)
-	//   }
+	// Fermer le listener dès que le contexte est annulé
+	go func() {
+		<-ctx.Done()
+		l.log.Info("contexte annulé, fermeture du listener mTLS")
+		ln.Close()
+	}()
 
-	return fmt.Errorf("TODO: boucle d'acceptation non implémentée")
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			// Si le listener est fermé (arrêt normal), on sort proprement
+			if errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			l.log.Warn("erreur lors de l'acceptation d'une connexion", "error", err)
+			continue
+		}
+
+		tlsConn, ok := conn.(*tls.Conn)
+		if !ok {
+			l.log.Error("connexion acceptée n'est pas TLS, fermée")
+			conn.Close()
+			continue
+		}
+
+		// Forcer le handshake TLS pour accéder au certificat client immédiatement
+		if err := tlsConn.Handshake(); err != nil {
+			l.log.Warn("échec du handshake TLS mTLS",
+				"remote", conn.RemoteAddr().String(),
+				"error", err,
+			)
+			conn.Close()
+			continue
+		}
+
+		state := tlsConn.ConnectionState()
+		if len(state.PeerCertificates) == 0 {
+			l.log.Warn("aucun certificat client dans la connexion TLS, fermée",
+				"remote", conn.RemoteAddr().String(),
+			)
+			conn.Close()
+			continue
+		}
+
+		clientCert := state.PeerCertificates[0]
+		l.log.Debug("connexion mTLS acceptée",
+			"remote", conn.RemoteAddr().String(),
+			"client_cn", clientCert.Subject.CommonName,
+		)
+
+		// Traiter chaque connexion dans une goroutine séparée
+		go l.handler.HandleConnection(conn, clientCert)
+	}
 }
 
 // Close ferme le listener mTLS.

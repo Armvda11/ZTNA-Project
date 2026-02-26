@@ -6,6 +6,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
+	"os"
+	"time"
 
 	"client/internal/core/domain"
 	"client/internal/core/ports"
@@ -29,7 +32,8 @@ func NewService(resources ports.ResourceCatalog, certs ports.CertificateStore, t
 	}
 }
 
-// Run établit un tunnel mTLS vers la Gateway pour la ressource demandée.
+// Run établit un tunnel mTLS vers la Gateway pour la ressource demandée,
+// puis relaie le trafic entre le tunnel et stdin/stdout du processus.
 func (s *Service) Run(ctx context.Context, resourceName string) error {
 	resource, err := s.resources.Resolve(ctx, resourceName)
 	if err != nil {
@@ -51,17 +55,34 @@ func (s *Service) Run(ctx context.Context, resourceName string) error {
 	}
 	defer tunnelConn.Close()
 
-	// Le relais de trafic (stdin/stdout, port-forward, proxy HTTP local) sera
-	// câblé ultérieurement selon le mode d'utilisation choisi par le CLI.
-	// Pour l'instant, le tunnel est établi et la décision Gateway validée.
-	s.log.Info("tunnel mTLS établi avec succès",
+	s.log.Info("tunnel mTLS établi, relais du trafic via stdin/stdout",
 		"resource", resource.Name,
 		"host", resource.Host,
 		"port", resource.Port,
 		"type", resource.Type,
 	)
+
+	// Relayer le trafic entre le tunnel mTLS et stdin/stdout
+	stdinout := &stdinStdoutConn{}
+	if err := s.tunnel.RelayTraffic(tunnelConn, stdinout); err != nil {
+		s.log.Debug("relais terminé", "error", err)
+	}
 	return nil
 }
+
+// stdinStdoutConn implémente net.Conn en reliant os.Stdin et os.Stdout.
+// Utilisé pour le mode CLI : le terminal de l'utilisateur devient
+// le "local endpoint" du tunnel.
+type stdinStdoutConn struct{}
+
+func (s *stdinStdoutConn) Read(b []byte) (int, error)  { return os.Stdin.Read(b) }
+func (s *stdinStdoutConn) Write(b []byte) (int, error) { return os.Stdout.Write(b) }
+func (s *stdinStdoutConn) Close() error                { return nil }
+func (s *stdinStdoutConn) LocalAddr() net.Addr         { return &net.UnixAddr{Name: "stdin"} }
+func (s *stdinStdoutConn) RemoteAddr() net.Addr        { return &net.UnixAddr{Name: "stdout"} }
+func (s *stdinStdoutConn) SetDeadline(t time.Time) error      { return nil }
+func (s *stdinStdoutConn) SetReadDeadline(t time.Time) error  { return nil }
+func (s *stdinStdoutConn) SetWriteDeadline(t time.Time) error { return nil }
 
 func formatResource(resource domain.ResourceRef) string {
 	if resource.Name != "" {

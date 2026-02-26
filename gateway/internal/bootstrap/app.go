@@ -9,12 +9,12 @@ import (
 	"fmt"
 	"log/slog"
 
-	"ztna-gateway/internal/infra/authz"
-	"ztna-gateway/internal/infra/revocation"
+	authorize "ztna-gateway/internal/infra/authz"
+	crl "ztna-gateway/internal/infra/revocation"
 	"ztna-gateway/internal/config"
-	"ztna-gateway/internal/infra/cache"
+	decisioncache "ztna-gateway/internal/infra/cache"
 	"ztna-gateway/internal/infra/mtls"
-	"ztna-gateway/internal/usecase/connect"
+	protocol "ztna-gateway/internal/usecase/connect"
 	"ztna-gateway/internal/infra/proxy"
 	"ztna-gateway/internal/infra/session"
 )
@@ -81,35 +81,17 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 //  6. Si deny : envoyer une réponse d'erreur et fermer la connexion
 //  7. Relayer le trafic bidirectionnel
 //  8. Journaliser la fin de session
-//
-// TODO: Implémenter la boucle d'acceptation des connexions
-// TODO: Lancer le traitement de chaque connexion dans une goroutine
-// TODO: Limiter le nombre de connexions concurrentes
 func (a *App) Run(ctx context.Context) error {
-	_ = ctx
-	a.log.Info("démarrage du listener mTLS", "addr", a.cfg.Server.ListenAddr)
-	a.log.Debug("security components initialized",
+	a.log.Info("démarrage du listener mTLS",
+		"addr", a.cfg.Server.ListenAddr,
 		"crl_ready", a.crl != nil,
 		"decision_cache_ready", a.cache != nil,
 	)
-
-	// TODO: appeler a.listener.Listen(ctx) pour démarrer l'acceptation
-	// TODO: pour chaque connexion, appeler a.handler.Handle(ctx, conn) en goroutine
-
-	return fmt.Errorf("TODO: Run non implémenté")
+	return a.listener.Listen(ctx)
 }
 
 // Close effectue l'arrêt graceful de la Gateway.
-//
-// TODO: Fermer le listener (plus de nouvelles connexions)
-// TODO: Attendre la fin des sessions actives (avec timeout)
-// TODO: Fermer les connexions proxy
 func (a *App) Close(ctx context.Context) error {
 	a.log.Info("arrêt graceful de la gateway")
-
-	// TODO: fermer le listener mTLS
-	// TODO: drainer les sessions actives
-	// TODO: fermer le gestionnaire de sessions
-
-	return nil
+	return a.listener.Close()
 }

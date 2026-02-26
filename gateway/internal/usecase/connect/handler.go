@@ -10,12 +10,14 @@
 package protocol
 
 import (
+	"context"
 	"crypto/x509"
+	"fmt"
 	"log/slog"
 	"net"
+	"time"
 
 	"ztna-gateway/internal/infra/authz"
-	"ztna-gateway/internal/core/domain"
 	"ztna-gateway/internal/infra/mtls"
 	"ztna-gateway/internal/infra/proxy"
 	"ztna-gateway/internal/infra/session"
@@ -65,46 +67,135 @@ func NewHandler(authz *authorize.Client, proxy *proxy.TCPProxy, sessions *sessio
 // TODO: Enrichir le contexte avec src_ip du client (conn.RemoteAddr())
 func (h *Handler) HandleConnection(conn net.Conn, clientCert *x509.Certificate) {
 	defer conn.Close()
+	ctx := context.Background()
 
 	// 1. Extraire l'identité du sujet depuis le certificat
 	subject := mtls.ExtractSubjectFromCert(clientCert, h.log)
+	srcIP, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
 	h.log.Info("connexion mTLS reçue",
 		"sub", subject.Sub,
 		"username", subject.Username,
 		"remote_addr", conn.RemoteAddr().String(),
 	)
 
-	// 2. Lire la requête CONNECT
-	// TODO: implémenter ReadMessage(conn, &req) avec le framing défini
-	// var req ConnectRequest
-	// if err := ReadMessage(conn, &req); err != nil { ... }
+	// 2. Lire la requête CONNECT (timeout de lecture)
+	conn.SetDeadline(time.Now().Add(30 * time.Second)) //nolint:errcheck
+	var req ConnectRequest
+	if err := ReadMessage(conn, &req); err != nil {
+		h.log.Error("impossible de lire la requête CONNECT", "error", err, "sub", subject.Sub)
+		return
+	}
+	conn.SetDeadline(time.Time{}) //nolint:errcheck — désactiver le deadline après lecture
 
 	// 3. Valider la requête
-	// TODO: vérifier req.Action == "connect"
-	// TODO: vérifier req.Resource.Host et req.Resource.Port non vides
+	if req.Action != "connect" {
+		h.log.Warn("action invalide", "action", req.Action, "sub", subject.Sub)
+		WriteMessage(conn, ConnectResponse{Decision: "deny", Reason: fmt.Sprintf("action inconnue: %s", req.Action)}) //nolint:errcheck
+		return
+	}
+	if req.Resource.Host == "" || req.Resource.Port == 0 {
+		h.log.Warn("ressource incomplete dans le ConnectRequest", "sub", subject.Sub)
+		WriteMessage(conn, ConnectResponse{Decision: "deny", Reason: "ressource incomplète"}) //nolint:errcheck
+		return
+	}
 
-	// 4. Construire la requête d'autorisation
-	// TODO: créer authorize.AuthzRequest à partir de subject + req
+	h.log.Info("requête CONNECT reçue",
+		"sub", subject.Sub,
+		"resource_type", req.Resource.Type,
+		"resource_host", req.Resource.Host,
+		"resource_port", req.Resource.Port,
+	)
 
-	// 5. Appeler le Control Plane
-	// TODO: decision, err := h.authz.Authorize(ctx, authzReq)
+	// 4. Construire et envoyer la requête d'autorisation au CP
+	authzReq := &authorize.AuthzRequest{
+		Subject: subject,
+		Action:  "connect",
+		Resource: authorize.ResourceRef{
+			Type: req.Resource.Type,
+			Host: req.Resource.Host,
+			Port: req.Resource.Port,
+		},
+		Context: authorize.AuthzContext{
+			SourceIP:  srcIP,
+			GatewayID: "", // TODO: injecter le gateway_id depuis la config
+		},
+	}
 
-	// 6. Si deny → répondre et fermer
-	// TODO: if decision.Effect == "deny" { WriteMessage(conn, denyResponse); return }
+	decision, err := h.authz.Authorize(authzReq)
+	if err != nil {
+		h.log.Error("erreur lors de l'appel d'autorisation", "error", err, "sub", subject.Sub)
+		WriteMessage(conn, ConnectResponse{Decision: "deny", Reason: "erreur interne d'autorisation"}) //nolint:errcheck
+		return
+	}
 
-	// 7. Si allow → enregistrer session et proxier
-	// TODO: sessionID := h.sessions.Register(subject, req.Resource)
-	// TODO: WriteMessage(conn, allowResponse)
-	// TODO: h.proxy.Proxy(ctx, conn, req.Resource.Host, req.Resource.Port)
-	// TODO: h.sessions.Unregister(sessionID)
+	// 5. Traiter la décision
+	if decision.Decision != "allow" {
+		h.log.Info("connexion refusée par le CP",
+			"sub", subject.Sub,
+			"decision_id", decision.DecisionID,
+			"reason", decision.Reason,
+		)
+		WriteMessage(conn, ConnectResponse{ //nolint:errcheck
+			Decision:   "deny",
+			Reason:     decision.Reason,
+			DecisionID: decision.DecisionID,
+		})
+		return
+	}
 
-	h.log.Warn("TODO: HandleConnection non implémenté — connexion fermée")
+	// 6. Autorisation accordée : enregistrer la session
+	sess := &session.Session{
+		Sub:          subject.Sub,
+		Username:     subject.Username,
+		ResourceType: req.Resource.Type,
+		ResourceHost: req.Resource.Host,
+		ResourcePort: req.Resource.Port,
+		SourceIP:     srcIP,
+		DecisionID:   decision.DecisionID,
+	}
+	sessionID, err := h.sessions.Register(sess)
+	if err != nil {
+		h.log.Error("impossible d'enregistrer la session", "error", err, "sub", subject.Sub)
+		WriteMessage(conn, ConnectResponse{Decision: "deny", Reason: "limite de sessions atteinte"}) //nolint:errcheck
+		return
+	}
+	defer h.sessions.Unregister(sessionID)
+
+	// 7. Envoyer la réponse "allow" au client
+	if err := WriteMessage(conn, ConnectResponse{
+		Decision:   "allow",
+		DecisionID: decision.DecisionID,
+		TTLSeconds: decision.TTLSeconds,
+	}); err != nil {
+		h.log.Error("impossible d'envoyer la réponse allow", "error", err, "sub", subject.Sub)
+		return
+	}
+
+	h.log.Info("session autorisée, démarrage du proxy",
+		"sub", subject.Sub,
+		"session_id", sessionID,
+		"decision_id", decision.DecisionID,
+		"target", fmt.Sprintf("%s:%d", req.Resource.Host, req.Resource.Port),
+	)
+
+	// 8. Relayer le trafic TCP vers la ressource cible
+	if err := h.proxy.Proxy(ctx, conn, req.Resource.Host, req.Resource.Port); err != nil {
+		h.log.Debug("proxy terminé", "session_id", sessionID, "error", err)
+	}
+
+	h.log.Info("session terminée", "session_id", sessionID, "sub", subject.Sub)
 }
 
 // validateRequest vérifie que la ConnectRequest est complète et valide.
-func validateRequest(req *ConnectRequest) *domain.SubjectRef {
-	// TODO: vérifier les champs obligatoires
-	// TODO: retourner une erreur typée si invalide
-	_ = req
+func validateRequest(req *ConnectRequest) error {
+	if req.Action == "" {
+		return fmt.Errorf("action manquante")
+	}
+	if req.Resource.Host == "" {
+		return fmt.Errorf("resource.host manquant")
+	}
+	if req.Resource.Port <= 0 || req.Resource.Port > 65535 {
+		return fmt.Errorf("resource.port invalide: %d", req.Resource.Port)
+	}
 	return nil
 }

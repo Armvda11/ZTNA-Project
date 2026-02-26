@@ -10,14 +10,18 @@
 package authorize
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"ztna-gateway/internal/config"
 	"ztna-gateway/internal/core/domain"
-	"ztna-gateway/internal/infra/tls"
+	tlsutil "ztna-gateway/internal/infra/tls"
 )
 
 // Client est le client d'autorisation vers le Control Plane.
@@ -84,7 +88,7 @@ func NewClient(cfg *config.Config, log *slog.Logger) *Client {
 // TODO: Supporter le mode mTLS entre Gateway et CP (évolution future)
 func (c *Client) Authorize(req *AuthzRequest) (*AuthzResponse, error) {
 	if c.httpClient == nil {
-		c.log.Debug("authorize appelé sans httpClient initialisé; mode skeleton/TODO")
+		return nil, fmt.Errorf("client HTTP non initialisé, vérifier la config TLS du CP")
 	}
 
 	c.log.Info("appel d'autorisation au Control Plane",
@@ -95,14 +99,45 @@ func (c *Client) Authorize(req *AuthzRequest) (*AuthzResponse, error) {
 		"resource_port", req.Resource.Port,
 	)
 
-	// TODO: construire le body JSON conforme au format du CP
-	// TODO: créer un http.Client avec la tls.Config appropriée
-	// TODO: créer la requête POST avec les headers X-PEP-ID et X-PEP-TOKEN
-	// TODO: envoyer la requête et lire la réponse
-	// TODO: parser la réponse JSON en AuthzResponse
-	// TODO: gérer les erreurs HTTP (401, 403, 500, timeout, etc.)
+	// Construire le body JSON
+	bodyBytes, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("impossible de sérialiser la requête d'autorisation: %w", err)
+	}
 
-	return nil, fmt.Errorf("TODO: Authorize non implémenté")
+	cpURL := strings.TrimRight(c.cfg.ControlPlane.BaseURL, "/") + "/api/v1/pep/authorize"
+	httpReq, err := http.NewRequest(http.MethodPost, cpURL, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("impossible de construire la requête HTTP: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-PEP-ID", c.cfg.PEP.ID)
+	httpReq.Header.Set("X-PEP-TOKEN", c.cfg.PEP.Token)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("impossible de joindre le Control Plane: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("erreur CP (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var authzResp AuthzResponse
+	if err := json.NewDecoder(resp.Body).Decode(&authzResp); err != nil {
+		return nil, fmt.Errorf("impossible de parser la réponse CP: %w", err)
+	}
+
+	c.log.Info("décision d'autorisation reçue",
+		"decision", authzResp.Decision,
+		"decision_id", authzResp.DecisionID,
+		"reason", authzResp.Reason,
+		"sub", req.Subject.Sub,
+	)
+
+	return &authzResp, nil
 }
 
 // AuthzRequest est la requête d'autorisation envoyée au CP.
