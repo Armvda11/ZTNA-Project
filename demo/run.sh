@@ -45,12 +45,28 @@ done
 echo -e "${BOLD}Vérification des prérequis de la démo…${NC}"
 
 MISSING=false
-for cmd in gnome-terminal ssh curl python3; do
+for cmd in ssh curl python3; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         print_err "Commande manquante : ${cmd}"
         MISSING=true
     fi
 done
+
+# Détection automatique du terminal émulateur
+TERM_EMU=""
+for t in gnome-terminal konsole xfce4-terminal tilix alacritty kitty xterm; do
+    if command -v "$t" >/dev/null 2>&1; then
+        TERM_EMU="$t"
+        break
+    fi
+done
+
+if [[ -z "$TERM_EMU" ]]; then
+    print_err "Aucun émulateur de terminal trouvé (gnome-terminal, konsole, xterm…)"
+    MISSING=true
+else
+    print_ok "Terminal détecté : ${TERM_EMU}"
+fi
 
 # wmctrl ou xdotool pour le positionnement des fenêtres
 POSITIONING_TOOL=""
@@ -59,8 +75,8 @@ if command -v wmctrl >/dev/null 2>&1; then
 elif command -v xdotool >/dev/null 2>&1; then
     POSITIONING_TOOL="xdotool"
 else
-    print_warn "wmctrl et xdotool sont absents — les fenêtres ne seront pas positionnées automatiquement"
-    print_warn "Installez avec : sudo apt install wmctrl  ou  sudo apt install xdotool"
+    print_warn "wmctrl et xdotool absents — positionnement auto désactivé"
+    print_warn "Installez avec : sudo apt install wmctrl"
 fi
 
 $MISSING && { print_err "Installez les prérequis manquants et relancez."; exit 1; }
@@ -97,41 +113,78 @@ GEO_GW_LOGS="${THIRD_W}x${TOP_H}+$(( HALF_W + THIRD_W ))+0"
 GEO_CLIENT="${HALF_W}x${BOT_H}+0+${TOP_H}"
 GEO_NARRATOR="${RIGHT_W}x${BOT_H}+${HALF_W}+${TOP_H}"
 
-# Profil gnome-terminal avec grande police pour écran de présentation
-GNOME_PROFILE_ARGS=""
-if gnome-terminal --help 2>&1 | grep -q '\-\-profile'; then
-    GNOME_PROFILE_ARGS=""  # utiliser le profil par défaut
-fi
-
-# ─── Fonction : ouvrir un terminal GNOME ─────────────────────────────────────
+# ─── Fonction : ouvrir un terminal (multi-emulateur) ────────────────────────
 open_terminal() {
     local title="$1"
-    local geometry="$2"
+    local geometry="$2"   # format WxH+X+Y
     local cmd="${3:-bash}"
-    local color_profile="${4:-}"
 
-    gnome-terminal \
-        --title="ZTNA: ${title}" \
-        --geometry="${geometry}" \
-        -- bash -c "${cmd}; exec bash" &
+    # Parser la géométrie
+    local w h x y rest
+    w=${geometry%%x*}
+    rest=${geometry#*x}
+    h=${rest%%+*}
+    rest=${rest#*+}
+    x=${rest%%+*}
+    y=${rest#*+}
+
+    case "$TERM_EMU" in
+        gnome-terminal)
+            gnome-terminal \
+                --title="ZTNA: ${title}" \
+                --geometry="${geometry}" \
+                -- bash -c "${cmd}; exec bash" &
+            ;;
+        konsole)
+            konsole \
+                --title "ZTNA: ${title}" \
+                --geometry "${w}x${h}+${x}+${y}" \
+                -e bash -c "${cmd}; exec bash" &
+            ;;
+        xfce4-terminal)
+            xfce4-terminal \
+                --title="ZTNA: ${title}" \
+                --geometry="${geometry}" \
+                -e "bash -c '${cmd}; exec bash'" &
+            ;;
+        tilix)
+            tilix \
+                --title="ZTNA: ${title}" \
+                -e "bash -c '${cmd}; exec bash'" &
+            ;;
+        alacritty)
+            alacritty \
+                --title "ZTNA: ${title}" \
+                -e bash -c "${cmd}; exec bash" &
+            ;;
+        kitty)
+            kitty \
+                --title "ZTNA: ${title}" \
+                bash -c "${cmd}; exec bash" &
+            ;;
+        xterm)
+            xterm \
+                -title "ZTNA: ${title}" \
+                -geometry "${geometry}" \
+                -e bash -c "${cmd}; exec bash" &
+            ;;
+    esac
 
     # Petit délai pour que la fenêtre s'ouvre
-    sleep 0.6
+    sleep 0.8
 
-    # Positionnement précis si wmctrl est disponible
+    # Positionnement précis via wmctrl (fiable sur X11 pour tous les terminaux)
     if [[ "$POSITIONING_TOOL" == "wmctrl" ]]; then
-        local x y w h
-        # Parser "WxH+X+Y"
-        w=${geometry%%x*}
-        rest=${geometry#*x}
-        h=${rest%%+*}
-        rest=${rest#*+}
-        x=${rest%%+*}
-        y=${rest#*+}
-
-        # Attendre que la fenêtre apparaisse
-        sleep 0.4
+        sleep 0.5
         wmctrl -r "ZTNA: ${title}" -e "0,${x},${y},${w},${h}" 2>/dev/null || true
+    elif [[ "$POSITIONING_TOOL" == "xdotool" ]]; then
+        sleep 0.5
+        local wid
+        wid=$(xdotool search --name "ZTNA: ${title}" 2>/dev/null | tail -1)
+        if [[ -n "$wid" ]]; then
+            xdotool windowmove "$wid" "$x" "$y" 2>/dev/null || true
+            xdotool windowsize "$wid" "$w" "$h" 2>/dev/null || true
+        fi
     fi
 }
 
