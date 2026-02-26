@@ -6,7 +6,7 @@
 # La Gateway extrait son identité du cert, consulte le CP (PEP/authorize)
 # et proxifie le TCP vers lan-app si la décision est "allow".
 # =============================================================================
-set -euo pipefail
+set -uo pipefail
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${DEMO_DIR}/lib/colors.sh"
 source "${DEMO_DIR}/lib/banner.sh"

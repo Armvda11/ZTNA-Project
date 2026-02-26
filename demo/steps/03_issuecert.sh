@@ -6,7 +6,7 @@
 # quitte jamais le client), construit un CSR et l'envoie au CP.
 # Le CP signe le CSR avec sa Device CA et retourne le certificat PEM.
 # =============================================================================
-set -euo pipefail
+set -uo pipefail
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${DEMO_DIR}/lib/colors.sh"
 source "${DEMO_DIR}/lib/banner.sh"

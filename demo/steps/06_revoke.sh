@@ -6,7 +6,7 @@
 # Le CP met à jour sa CRL (Certificate Revocation List).
 # La Gateway rechargera la CRL lors de la prochaine connexion.
 # =============================================================================
-set -euo pipefail
+set -uo pipefail
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${DEMO_DIR}/lib/colors.sh"
 source "${DEMO_DIR}/lib/banner.sh"

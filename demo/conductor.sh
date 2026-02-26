@@ -15,7 +15,7 @@
 #   --skip N[,N...]       Sauter certaines étapes (ex: --skip 4,5)
 #   -h, --help            Afficher cette aide
 # =============================================================================
-set -euo pipefail
+set -uo pipefail
 
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${DEMO_DIR}/lib/colors.sh"
@@ -114,7 +114,7 @@ wait_or_pause() {
     else
         echo -e "${CYAN}${BOLD}Appuyez sur [Entrée] pour continuer vers la prochaine étape…${NC}"
         echo -e "${DIM}  (ou tapez 'skip' pour sauter, 'quit' pour terminer)${NC}"
-        read -r user_input
+        read -r user_input </dev/tty || true
         case "${user_input,,}" in
             quit|q|exit) echo -e "${YELLOW}Démo interrompue.${NC}"; exit 0 ;;
             skip|s)      return 1 ;;
@@ -169,14 +169,13 @@ for step_num in $(seq "$FROM_STEP" "$TO_STEP"); do
     echo -e ""
 
     # Exécuter l'étape
-    bash "$STEP_FILE"
-    EXIT_CODE=$?
-
-    if [[ $EXIT_CODE -ne 0 ]]; then
+    EXIT_CODE=0
+    if ! bash "$STEP_FILE"; then
+        EXIT_CODE=$?
         print_err "Étape ${step_num} terminée avec une erreur (code ${EXIT_CODE})"
         if [[ "$MODE" != "auto" ]]; then
             echo -e "${YELLOW}Continuer quand même ? [Entrée=oui / 'quit'=arrêter]${NC}"
-            read -r user_input
+            read -r user_input </dev/tty || true
             [[ "${user_input,,}" == "quit" ]] && exit 1
         fi
     fi

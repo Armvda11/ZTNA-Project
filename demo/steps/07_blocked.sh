@@ -7,7 +7,7 @@
 # le CP lui refusera via l'évaluation des sessions actives ou la liste noire.
 # Dans tous les cas : DENY visible en temps réel.
 # =============================================================================
-set -euo pipefail
+set -uo pipefail
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${DEMO_DIR}/lib/colors.sh"
 source "${DEMO_DIR}/lib/banner.sh"

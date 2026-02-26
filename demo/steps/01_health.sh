@@ -2,7 +2,7 @@
 # =============================================================================
 # demo/steps/01_health.sh — Health check de tous les services
 # =============================================================================
-set -euo pipefail
+set -uo pipefail
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${DEMO_DIR}/lib/colors.sh"
 source "${DEMO_DIR}/lib/banner.sh"

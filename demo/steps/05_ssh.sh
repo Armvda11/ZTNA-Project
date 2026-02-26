@@ -6,7 +6,7 @@
 # Le client se connecte à lan-app via SSH avec jump sur ztna-gw.
 # TrustedUserCAKeys est configurée sur les serveurs LAN → accès sans mot de passe.
 # =============================================================================
-set -euo pipefail
+set -uo pipefail
 DEMO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${DEMO_DIR}/lib/colors.sh"
 source "${DEMO_DIR}/lib/banner.sh"
