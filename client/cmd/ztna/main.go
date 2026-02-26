@@ -16,9 +16,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"client/internal/app"
+	"client/internal/bootstrap"
 	"client/internal/config"
-	"client/internal/logger"
+	"client/internal/observability/logger"
 )
 
 func main() {

@@ -1,19 +1,19 @@
 # Client ZTNA
 
-Client CLI pour le système Zero Trust Network Access (Method 3 : mTLS tunnel vers Gateway).
+Client CLI pour le système Zero Trust Network Access (mTLS tunnel vers Gateway).
 
 ## Architecture
 
 ```
 ┌─────────┐     OIDC      ┌───────────┐
-│  Client  │──────────────▷│ Keycloak  │
-│  (CLI)   │               └───────────┘
+│  Client  │────────────▷│ Keycloak  │
+│  (CLI)   │              └───────────┘
 │          │   mTLS cert    ┌──────────────┐
-│          │───────────────▷│Control Plane │
+│          │──────────────▷│Control Plane │
 │          │  (stub/TODO)   │  :8080       │
 │          │                └──────────────┘
 │          │   mTLS tunnel  ┌──────────────┐    TCP     ┌──────────┐
-│          │═══════════════▷│   Gateway    │───────────▷│ Resource │
+│          │══════════════▷│   Gateway    │───────────▷│ Resource │
 └─────────┘                 │  :9443       │            └──────────┘
                             └──────────────┘
 ```
@@ -56,27 +56,33 @@ envoie une requête CONNECT et, si autorisé, relaie le trafic.
 
 ```
 client/
-├── cmd/ztna/main.go            # Point d'entrée CLI
-├── config.lab.yaml             # Configuration de lab
-├── go.mod                      # Module Go
+├── cmd/ztna/main.go                # Point d'entrée CLI
+├── config.lab.yaml                 # Configuration de lab
+├── go.mod                          # Module Go
 ├── internal/
-│   ├── app/app.go              # Câblage applicatif (RunLogin, RunCert, RunConnect)
+│   ├── bootstrap/app.go            # Orchestration (login/cert/connect)
 │   ├── config/
-│   │   ├── config.go           # Chargement YAML + validation
-│   │   └── config_test.go      # Tests de configuration
-│   ├── credentials/
-│   │   └── mtls_cert.go        # Demande de certificat mTLS au CP (STUB)
-│   ├── domain/
-│   │   ├── errors.go           # Erreurs sentinelles
-│   │   └── model.go            # Modèles partagés
-│   ├── logger/
-│   │   └── logger.go           # Logger structuré slog
-│   ├── oidc/
-│   │   ├── oidc.go             # Client OIDC (TODO)
-│   │   └── token_store.go      # Stockage sécurisé des tokens (TODO)
-│   └── tunnel/
-│       ├── protocol.go         # Structures CONNECT request/response
-│       └── tunnel.go           # Gestionnaire de tunnel mTLS (TODO)
+│   │   ├── config.go               # Chargement YAML + validation
+│   │   └── config_test.go          # Tests de configuration
+│   ├── core/
+│   │   ├── domain/
+│   │   │   ├── errors.go           # Erreurs sentinelles
+│   │   │   └── model.go            # Modèles partagés
+│   │   └── ports/                  # Interfaces métier
+│   ├── infra/
+│   │   ├── oidc/                   # Client OIDC + token store
+│   │   ├── credentials/            # Demande certificat mTLS (stub)
+│   │   ├── tunnel/                 # Tunnel mTLS + protocole CONNECT
+│   │   ├── tls/                    # Helpers TLS client
+│   │   └── storage/                # Persistance locale (tokens/certs)
+│   ├── observability/
+│   │   └── logger/                 # Logger structuré slog
+│   └── usecase/
+│       ├── login/                  # Use case login
+│       ├── issuecert/              # Use case demande cert
+│       └── connect/                # Use case connect
+├── ui/
+│   └── gui/                        # Dossier réservé future interface graphique (vide)
 └── README.md
 ```
 

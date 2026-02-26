@@ -1,8 +1,3 @@
-// Package main est le point d'entrée de la Gateway ZTNA. Elle écoute
-// les connexions mTLS entrantes depuis les clients ZTNA, vérifie
-// l'identité du client (authn locale via certificat), demande une
-// décision d'autorisation au Control Plane et relaie le trafic vers
-// les ressources autorisées.
 package main
 
 import (
@@ -15,13 +10,16 @@ import (
 	"syscall"
 	"time"
 
-	"gateway/internal/app"
-	"gateway/internal/config"
-	"gateway/internal/logger"
+	app "ztna-gateway/internal/bootstrap"
+	"ztna-gateway/internal/config"
+	"ztna-gateway/internal/observability/logger"
 )
 
+var version = "dev"
+
 func main() {
-	cfgPath := flag.String("config", "config.yaml", "chemin vers le fichier de configuration")
+	_ = version
+	cfgPath := flag.String("config", "config.lab.yaml", "chemin vers le fichier de configuration")
 	flag.Parse()
 
 	cfg, err := config.Load(*cfgPath)
@@ -42,7 +40,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Lancer l'application dans une goroutine
 	go func() {
 		if err := application.Run(ctx); err != nil {
 			log.Error("erreur durant l'exécution", "error", err)
@@ -51,11 +48,9 @@ func main() {
 
 	log.Info("ztna-gateway démarrée", "listen", cfg.Server.ListenAddr)
 
-	// Attendre le signal d'arrêt
 	<-ctx.Done()
 	log.Info("arrêt en cours...")
 
-	// Arrêt graceful avec timeout de 10 secondes
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
