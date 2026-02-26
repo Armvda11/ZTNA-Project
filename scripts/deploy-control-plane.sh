@@ -78,7 +78,19 @@ done
 log "Vérification Docker sur ztna-cp..."
 if ! ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "docker --version" >/dev/null 2>&1; then
   log "Installation de Docker..."
-  ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "sudo apt update && sudo DEBIAN_FRONTEND=noninteractive apt install -y docker.io docker-compose && sudo systemctl enable --now docker && sudo usermod -aG docker ztna"
+  ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "sudo apt update && sudo DEBIAN_FRONTEND=noninteractive apt install -y docker.io && sudo systemctl enable --now docker && sudo usermod -aG docker ztna"
+fi
+
+# Installer Docker Compose V2 si absent (docker-compose v1 est incompatible avec Docker ≥25)
+if ! ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "docker compose version" >/dev/null 2>&1; then
+  log "Installation de Docker Compose V2..."
+  ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} \
+    "sudo DEBIAN_FRONTEND=noninteractive apt install -y docker-compose-plugin 2>/dev/null || \
+     (sudo mkdir -p /usr/local/lib/docker/cli-plugins && \
+      sudo curl -fsSL https://github.com/docker/compose/releases/download/v2.27.1/docker-compose-linux-x86_64 \
+        -o /usr/local/lib/docker/cli-plugins/docker-compose && \
+      sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose)"
+  log "✓ Docker Compose V2 installé"
 fi
 log "✓ Docker opérationnel"
 
@@ -99,7 +111,7 @@ log "✓ Fichiers copiés"
 
 # 6. Lancer Keycloak
 log "Démarrage de Keycloak..."
-ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "cd ztna/control-plane/keycloak && docker-compose up -d"
+ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "cd ztna/control-plane/keycloak && docker compose up -d --force-recreate"
 sleep 5
 log "✓ Keycloak démarré"
 
