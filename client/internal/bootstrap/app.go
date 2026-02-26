@@ -6,8 +6,10 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"client/internal/config"
 	"client/internal/infra/credentials"
@@ -67,19 +69,48 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 //  3. Stocker les tokens de manière sécurisée (token_store)
 //  4. Afficher un résumé (sub, username, expiration)
 //
-// TODO: implémenter le flux OIDC complet avec gestion d'erreurs
 // TODO: supporter plusieurs providers OIDC si nécessaire
 func (a *App) RunLogin(ctx context.Context) error {
 	a.log.Info("démarrage du flux de login OIDC")
 
 	// TODO: exposer des flags CLI pour choisir explicitement le mode de login
 	// et passer username/password en mode lab.
-	_, err := a.loginUC.Run(ctx, login.Options{Mode: login.ModeAuto})
+	result, err := a.loginUC.Run(ctx, login.Options{Mode: login.ModeAuto})
 	if err != nil {
-		return err
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("flux login OIDC interrompu: %w", err)
+		}
+		return fmt.Errorf("échec du flux login OIDC: %w", err)
 	}
 
-	return fmt.Errorf("TODO: post-traitement RunLogin non implémenté")
+	if result == nil {
+		return fmt.Errorf("échec du flux login OIDC: résultat vide")
+	}
+	if result.AccessToken == "" {
+		return fmt.Errorf("échec du flux login OIDC: access_token manquant")
+	}
+
+	sub := result.Subject.Sub
+	if sub == "" {
+		sub = "n/a"
+	}
+	username := result.Subject.Username
+	if username == "" {
+		username = "n/a"
+	}
+
+	expiresAt := "inconnu"
+	if !result.ExpiresAt.IsZero() {
+		expiresAt = result.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+
+	a.log.Info("login OIDC réussi",
+		"sub", sub,
+		"username", username,
+		"expires_at", expiresAt,
+		"refresh_token", result.RefreshToken != "",
+	)
+	return nil
 }
 
 // RunCert demande un certificat mTLS client au Control Plane.

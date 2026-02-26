@@ -6,18 +6,16 @@ import (
 )
 
 func TestLoad_ValidConfig(t *testing.T) {
-	content := []byte(`
-oidc:
-  issuer: "http://localhost:8081/realms/ztna"
-  client_id: "ztna-client"
-control_plane:
-  base_url: "https://localhost:8080"
-gateway:
-  address: "localhost:9443"
-logging:
-  level: debug
-  format: text
-`)
+	content := []byte("oidc:\n" +
+		"  issuer: \"https://localhost:8081/realms/ztna\"\n" +
+		"  client_id: \"ztna-client\"\n" +
+		"control_plane:\n" +
+		"  base_url: \"https://localhost:8080\"\n" +
+		"gateway:\n" +
+		"  address: \"localhost:9443\"\n" +
+		"logging:\n" +
+		"  level: debug\n" +
+		"  format: text\n")
 	tmpFile, err := os.CreateTemp("", "config-*.yaml")
 	if err != nil {
 		t.Fatalf("impossible de créer le fichier temporaire: %v", err)
@@ -34,8 +32,8 @@ logging:
 		t.Fatalf("Load() a échoué: %v", err)
 	}
 
-	if cfg.OIDC.Issuer != "http://localhost:8081/realms/ztna" {
-		t.Errorf("issuer attendu http://localhost:8081/realms/ztna, obtenu %s", cfg.OIDC.Issuer)
+	if cfg.OIDC.Issuer != "https://localhost:8081/realms/ztna" {
+		t.Errorf("issuer attendu https://localhost:8081/realms/ztna, obtenu %s", cfg.OIDC.Issuer)
 	}
 	if cfg.Logging.Level != "debug" {
 		t.Errorf("level attendu debug, obtenu %s", cfg.Logging.Level)

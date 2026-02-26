@@ -12,11 +12,17 @@ package oidc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"client/internal/config"
+	tlsinfra "client/internal/infra/tls"
 )
 
 // TokenSet contient les tokens OIDC obtenus après authentification.
@@ -34,14 +40,22 @@ type Client struct {
 	cfg   *config.Config
 	log   *slog.Logger
 	store *TokenStore
+	http  *http.Client
 }
 
 // NewClient crée un nouveau client OIDC configuré.
 func NewClient(cfg *config.Config, log *slog.Logger) *Client {
+	httpClient, err := tlsinfra.NewControlPlaneHTTPClient(cfg)
+	if err != nil {
+		log.Warn("client HTTP TLS par défaut indisponible, fallback sur client HTTP standard", "error", err)
+		httpClient = http.DefaultClient
+	}
+
 	return &Client{
 		cfg:   cfg,
 		log:   log,
 		store: NewTokenStore(cfg.Storage.Path, log),
+		http:  httpClient,
 	}
 }
 
@@ -53,30 +67,64 @@ func NewClient(cfg *config.Config, log *slog.Logger) *Client {
 //   - Le mot de passe transite en clair vers le provider OIDC
 //   - Ce flux est déprécié par OAuth 2.1
 //   - En production, utiliser DeviceFlowLogin() ou Authorization Code + PKCE
-//
-// TODO: Implémenter l'appel HTTP POST vers l'endpoint token du provider OIDC :
-//
-//	POST {issuer}/protocol/openid-connect/token
-//	Content-Type: application/x-www-form-urlencoded
-//
-//	grant_type=password
-//	&client_id={client_id}
-//	&client_secret={client_secret}   (si configuré)
-//	&username={username}
-//	&password={password}
-//	&scope=openid profile
-//
-// TODO: Parser la réponse JSON en TokenSet
-// TODO: Stocker le TokenSet via a.store.Save()
 func (c *Client) LoginPasswordGrantLAB(ctx context.Context, username, password string) (*TokenSet, error) {
 	c.log.Warn("utilisation du flux Resource Owner Password Grant (lab uniquement)")
 
-	// TODO: construire la requête HTTP vers {issuer}/protocol/openid-connect/token
-	// TODO: envoyer la requête avec les paramètres grant_type=password
-	// TODO: parser la réponse JSON
-	// TODO: stocker les tokens
+	form := url.Values{}
+	form.Set("grant_type", "password")
+	form.Set("client_id", c.cfg.OIDC.ClientID)
+	form.Set("username", username)
+	form.Set("password", password)
+	form.Set("scope", "openid profile")
+	if c.cfg.OIDC.ClientSecret != "" {
+		form.Set("client_secret", c.cfg.OIDC.ClientSecret)
+	}
 
-	return nil, fmt.Errorf("TODO: LoginPasswordGrantLAB non implémenté")
+	tokenEndpoint := strings.TrimRight(c.cfg.OIDC.Issuer, "/") + "/protocol/openid-connect/token"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("impossible de construire la requête token OIDC: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("échec de l'appel à l'endpoint token OIDC: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("échec OIDC token endpoint (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		IDToken      string `json:"id_token"`
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int64  `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return nil, fmt.Errorf("impossible de parser la réponse token OIDC: %w", err)
+	}
+	if tokenResp.AccessToken == "" {
+		return nil, fmt.Errorf("réponse token OIDC invalide: access_token manquant")
+	}
+
+	tokens := &TokenSet{
+		AccessToken:  tokenResp.AccessToken,
+		RefreshToken: tokenResp.RefreshToken,
+		IDToken:      tokenResp.IDToken,
+		TokenType:    tokenResp.TokenType,
+		ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
+	}
+
+	if err := c.store.Save(tokens); err != nil {
+		return nil, fmt.Errorf("impossible de stocker les tokens OIDC: %w", err)
+	}
+
+	return tokens, nil
 }
 
 // DeviceFlowLogin effectue un flux Device Authorization pour permettre
@@ -93,11 +141,146 @@ func (c *Client) LoginPasswordGrantLAB(ctx context.Context, username, password s
 //   - Poll {issuer}/protocol/openid-connect/token avec grant_type=urn:ietf:params:oauth:grant-type:device_code
 //   - Gérer les réponses authorization_pending, slow_down, expired_token
 func (c *Client) DeviceFlowLogin(ctx context.Context) (*TokenSet, error) {
-	c.log.Info("démarrage du flux Device Authorization")
+	c.log.Info("dÃ©marrage du flux Device Authorization")
 
-	// TODO: implémenter le flux Device Authorization complet
+	deviceEndpoint := strings.TrimRight(c.cfg.OIDC.Issuer, "/") + "/protocol/openid-connect/auth/device"
 
-	return nil, fmt.Errorf("TODO: DeviceFlowLogin non implémenté")
+	deviceForm := url.Values{}
+	deviceForm.Set("client_id", c.cfg.OIDC.ClientID)
+	deviceForm.Set("scope", "openid profile")
+	if c.cfg.OIDC.ClientSecret != "" {
+		deviceForm.Set("client_secret", c.cfg.OIDC.ClientSecret)
+	}
+
+	deviceReq, err := http.NewRequestWithContext(ctx, http.MethodPost, deviceEndpoint, strings.NewReader(deviceForm.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("impossible de construire la requête device authorization: %w", err)
+	}
+	deviceReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	deviceResp, err := c.http.Do(deviceReq)
+	if err != nil {
+		return nil, fmt.Errorf("échec de l'appel device authorization OIDC: %w", err)
+	}
+	defer deviceResp.Body.Close()
+
+	if deviceResp.StatusCode < http.StatusOK || deviceResp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(deviceResp.Body)
+		return nil, fmt.Errorf("échec device authorization endpoint (%d): %s", deviceResp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var deviceCodeResp struct {
+		DeviceCode              string `json:"device_code"`
+		UserCode                string `json:"user_code"`
+		VerificationURI         string `json:"verification_uri"`
+		VerificationURIComplete string `json:"verification_uri_complete"`
+		ExpiresIn               int64  `json:"expires_in"`
+		Interval                int64  `json:"interval"`
+	}
+	if err := json.NewDecoder(deviceResp.Body).Decode(&deviceCodeResp); err != nil {
+		return nil, fmt.Errorf("impossible de parser la réponse device authorization: %w", err)
+	}
+	if deviceCodeResp.DeviceCode == "" || deviceCodeResp.UserCode == "" {
+		return nil, fmt.Errorf("réponse device authorization invalide: device_code/user_code manquant")
+	}
+
+	verificationURL := deviceCodeResp.VerificationURIComplete
+	if verificationURL == "" {
+		verificationURL = deviceCodeResp.VerificationURI
+	}
+
+	c.log.Info("validez la connexion dans le navigateur", "verification_url", verificationURL, "user_code", deviceCodeResp.UserCode)
+
+	pollInterval := time.Duration(deviceCodeResp.Interval) * time.Second
+	if pollInterval <= 0 {
+		pollInterval = 5 * time.Second
+	}
+
+	expiresIn := time.Duration(deviceCodeResp.ExpiresIn) * time.Second
+	if expiresIn <= 0 {
+		expiresIn = 10 * time.Minute
+	}
+	deadline := time.Now().Add(expiresIn)
+
+	tokenEndpoint := strings.TrimRight(c.cfg.OIDC.Issuer, "/") + "/protocol/openid-connect/token"
+
+	for {
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("device_code expiré avant autorisation utilisateur")
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(pollInterval):
+		}
+
+		pollForm := url.Values{}
+		pollForm.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+		pollForm.Set("client_id", c.cfg.OIDC.ClientID)
+		pollForm.Set("device_code", deviceCodeResp.DeviceCode)
+		if c.cfg.OIDC.ClientSecret != "" {
+			pollForm.Set("client_secret", c.cfg.OIDC.ClientSecret)
+		}
+
+		pollReq, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint, strings.NewReader(pollForm.Encode()))
+		if err != nil {
+			return nil, fmt.Errorf("impossible de construire la requête de polling token: %w", err)
+		}
+		pollReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+		pollResp, err := c.http.Do(pollReq)
+		if err != nil {
+			return nil, fmt.Errorf("échec polling token endpoint OIDC: %w", err)
+		}
+
+		var tokenResp struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			IDToken      string `json:"id_token"`
+			TokenType    string `json:"token_type"`
+			ExpiresIn    int64  `json:"expires_in"`
+			Error        string `json:"error"`
+		}
+
+		decodeErr := json.NewDecoder(pollResp.Body).Decode(&tokenResp)
+		pollResp.Body.Close()
+		if decodeErr != nil {
+			return nil, fmt.Errorf("impossible de parser la réponse de polling OIDC: %w", decodeErr)
+		}
+
+		if pollResp.StatusCode >= http.StatusOK && pollResp.StatusCode < http.StatusMultipleChoices {
+			if tokenResp.AccessToken == "" {
+				return nil, fmt.Errorf("réponse token OIDC invalide: access_token manquant")
+			}
+
+			tokens := &TokenSet{
+				AccessToken:  tokenResp.AccessToken,
+				RefreshToken: tokenResp.RefreshToken,
+				IDToken:      tokenResp.IDToken,
+				TokenType:    tokenResp.TokenType,
+				ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
+			}
+
+			if err := c.store.Save(tokens); err != nil {
+				return nil, fmt.Errorf("impossible de stocker les tokens OIDC: %w", err)
+			}
+
+			return tokens, nil
+		}
+
+		switch tokenResp.Error {
+		case "authorization_pending":
+			continue
+		case "slow_down":
+			pollInterval += 2 * time.Second
+			continue
+		case "expired_token":
+			return nil, fmt.Errorf("device_code expiré, relancez ztna login")
+		default:
+			return nil, fmt.Errorf("échec device flow token endpoint (%d): %s", pollResp.StatusCode, tokenResp.Error)
+		}
+	}
 }
 
 // RefreshAccessToken utilise le refresh_token stocké pour obtenir un
@@ -129,10 +312,31 @@ func (c *Client) RefreshAccessToken(ctx context.Context) (*TokenSet, error) {
 // TODO: Si expiré, appeler RefreshAccessToken()
 // TODO: Si le refresh échoue, retourner une erreur indiquant de relancer login
 func (c *Client) GetValidAccessToken(ctx context.Context) (string, error) {
-	// TODO: charger le TokenSet depuis le store
-	// TODO: vérifier si le token est encore valide (expires_at - margin)
-	// TODO: si expiré, tenter un refresh
-	// TODO: retourner l'access_token
+	tokens, err := c.store.Load()
+	if err != nil {
+		return "", fmt.Errorf("impossible de charger les tokens stockés: %w", err)
+	}
 
-	return "", fmt.Errorf("TODO: GetValidAccessToken non implémenté")
+	if tokens.AccessToken == "" {
+		return "", fmt.Errorf("token stocké invalide: access_token manquant")
+	}
+
+	margin := config.TokenExpiryMargin()
+	if tokens.ExpiresAt.IsZero() || time.Now().Before(tokens.ExpiresAt.Add(-margin)) {
+		return tokens.AccessToken, nil
+	}
+
+	if tokens.RefreshToken == "" {
+		return "", fmt.Errorf("access_token expiré et refresh_token absent: relancez 'ztna login'")
+	}
+
+	refreshed, refreshErr := c.RefreshAccessToken(ctx)
+	if refreshErr != nil {
+		return "", fmt.Errorf("access_token expiré et rafraîchissement impossible: %w", refreshErr)
+	}
+	if refreshed == nil || refreshed.AccessToken == "" {
+		return "", fmt.Errorf("rafraîchissement token invalide: access_token manquant")
+	}
+
+	return refreshed.AccessToken, nil
 }
