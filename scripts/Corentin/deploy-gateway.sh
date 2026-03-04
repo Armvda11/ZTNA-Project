@@ -140,6 +140,16 @@ SVC
 sudo systemctl daemon-reload
 sudo systemctl enable ztna-gateway
 sudo systemctl restart ztna-gateway || true
+
+# Résolution locale des ressources LAN utilisées dans les policies (resource_match)
+sudo sed -i '/# ZTNA-LAB-HOSTS-BEGIN/,/# ZTNA-LAB-HOSTS-END/d' /etc/hosts
+cat <<'HOSTS' | sudo tee -a /etc/hosts >/dev/null
+# ZTNA-LAB-HOSTS-BEGIN
+10.10.30.10 lan-app
+10.10.30.11 lan-admin
+# ZTNA-LAB-HOSTS-END
+HOSTS
+
 echo "✓ Gateway service installé"
 REMOTE
 

@@ -18,7 +18,7 @@ server:
 control_plane:
   base_url: "https://10.10.20.30:8080"     # ← Port 8080 : API publique + PEP mode token
   ca_file: "./certs/cp-ca.crt"             # CA pour vérifier le cert du CP
-  insecure_skip_verify: false
+  insecure_skip_verify: true                # Lab: cert CP sans IP SAN (10.10.20.30)
 
 # Identifiants PEP pour l'authentification de la Gateway auprès du CP.
 # Correspondent à la configuration pep.tokens dans le CP.
