@@ -133,6 +133,8 @@ type authorizeResponse struct {
 // `decision`) pour correspondre au champ lu par le client gateway.
 func (h *PEPHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 	var req authorizeRequest
+	// Limit request body to 1 MB to prevent OOM attacks
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, domainErrors.ErrInvalidInput)
 		return

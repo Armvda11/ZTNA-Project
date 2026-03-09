@@ -12,6 +12,7 @@
         vm-start vm-stop vm-force-stop vm-reboot vm-console \
         logs-cp logs-gw clean \
         build-cp build-gw build-cli test-unit test certs \
+        demo demo-test demo-detach demo-arch demo-tests demo-interactive \
         init check-requirements plan apply test-flux2-local setup-routing
 
 PROJECT_DIR   := $(shell pwd)
@@ -41,6 +42,7 @@ help:
 	@echo "$(BLUE)ZTNA Lab — commandes principales$(NC)"
 	@echo ""
 	@echo "$(YELLOW)Onboarding$(NC)"
+	@echo "  make install       Auto-détection et installation des prérequis manquants"
 	@echo "  make bootstrap     Installation complète + démarrage VMs (1 seule commande ← COMMENCER ICI)"
 	@echo "  make prereq        Vérifier les prérequis minimum"
 	@echo "  make doctor        Diagnostic + réparation automatique (si VMs ne démarrent pas)"
@@ -80,6 +82,12 @@ help:
 	@echo "$(YELLOW)Dev (optionnel)$(NC)"
 	@echo "  make build-cp | build-gw | build-cli | test-unit | test | certs"
 	@echo ""
+	@echo "$(YELLOW)Demo$(NC)"
+	@echo "  make demo              Dashboard tmux 4 panes (CP logs, GW logs, client, status)"
+	@echo "  make demo-interactive  Démo interactive orchestrée (5 fenêtres séparées sur le bureau)"
+	@echo "  make demo-test         Idem + lance automatiquement test-flux2 (mTLS tunnel)"
+	@echo "  make demo-detach       Lance le dashboard en arrière-plan"
+	@echo ""
 	@echo "$(BLUE)Compatibilité legacy:$(NC) init, check-requirements, plan, apply, test-flux2-local"
 
 # ============================================================================
@@ -88,6 +96,12 @@ help:
 
 prereq:
 	@bash ./scripts/check-requirements.sh
+
+install:
+	@bash ./scripts/auto-install.sh
+
+install-yes:
+	@bash ./scripts/auto-install.sh --yes
 
 doctor:
 	@bash ./scripts/ztna-doctor.sh
@@ -271,6 +285,28 @@ test: test-unit
 
 certs:
 	@bash ./scripts/gen-tls-certs.sh
+
+# ============================================================================
+# DEMO
+# ============================================================================
+
+demo:
+	@bash ./scripts/demo-live.sh
+
+demo-test:
+	@bash ./scripts/demo-live.sh --test
+
+demo-detach:
+	@bash ./scripts/demo-live.sh --detach
+
+demo-arch:
+	@bash ./scripts/demo-architecture.sh
+
+demo-tests:
+	@bash ./scripts/demo-tests.sh
+
+demo-interactive:
+	@bash ./scripts/demo-interactive.sh
 
 # ============================================================================
 # LEGACY ALIASES (temporaires)

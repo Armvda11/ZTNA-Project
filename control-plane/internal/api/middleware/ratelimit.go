@@ -5,8 +5,6 @@ import (
 	"sync"
 	"time"
 
-	domainErrors "control-plane/internal/domain/errors"
-
 	"golang.org/x/time/rate"
 )
 
@@ -64,8 +62,9 @@ func (rl *RateLimiter) HandlerByPEP(next http.Handler) http.Handler {
 			key = extractClientIP(r)
 		}
 		if !rl.allow(key) {
-			writeError(w, domainErrors.ErrInvalidInput)
-			http.Error(w, `{"error":"too many requests"}`, http.StatusTooManyRequests)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"error":"too many requests"}`))
 			return
 		}
 		next.ServeHTTP(w, r)

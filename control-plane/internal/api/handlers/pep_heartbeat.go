@@ -40,6 +40,7 @@ func (h *PEPHeartbeatHandler) Beat(w http.ResponseWriter, r *http.Request) {
 
 	var req heartbeatRequest
 	// Ignore decode errors — the body is optional.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
 	status, err := h.gatewaySvc.Heartbeat(r.Context(), pepID, req.Version)

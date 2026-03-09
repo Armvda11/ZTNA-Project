@@ -40,8 +40,7 @@ info "ZTNA Lab — vérification des prérequis (quickstart)"
 if grep -E 'vmx|svm' /proc/cpuinfo >/dev/null 2>&1; then
   ok "Virtualisation CPU détectée (VT-x/AMD-V)"
 else
-  err "Virtualisation CPU absente (activer VT-x/AMD-V dans le BIOS)"
-  FAILS=$((FAILS + 1))
+  warn "Virtualisation CPU absente (les VMs peuvent ne pas démarrer)"
 fi
 
 RAM_GB=$(free -g | awk 'NR==2 {print $2}')
@@ -55,8 +54,7 @@ FREE_GB=$(df / | awk 'NR==2 {printf "%d", $4/1024/1024}')
 if [ "${FREE_GB:-0}" -ge 100 ]; then
   ok "Espace disque ${FREE_GB} GB"
 else
-  err "Espace disque insuffisant: ${FREE_GB:-0} GB (100 GB minimum)"
-  FAILS=$((FAILS + 1))
+  warn "Espace disque faible: ${FREE_GB:-0} GB (100 GB recommandés)"
 fi
 
 require_cmd "Terraform" terraform

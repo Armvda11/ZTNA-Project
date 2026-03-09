@@ -10,14 +10,17 @@
 package authorize
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"ztna-gateway/internal/config"
 	"ztna-gateway/internal/core/domain"
-	"ztna-gateway/internal/infra/tls"
+	tlsutil "ztna-gateway/internal/infra/tls"
 )
 
 // Client est le client d'autorisation vers le Control Plane.
@@ -31,63 +34,24 @@ type Client struct {
 func NewClient(cfg *config.Config, log *slog.Logger) *Client {
 	httpClient, err := tlsutil.NewControlPlaneHTTPClient(cfg, 10*time.Second)
 	if err != nil {
-		log.Warn("client HTTP CP non initialisé, fallback TODO", "error", err)
+		log.Warn("client HTTP CP non initialisé", "error", err)
 	}
 	return &Client{cfg: cfg, log: log, httpClient: httpClient}
 }
 
+// GatewayID retourne l'identifiant de la gateway depuis la config.
+func (c *Client) GatewayID() string {
+	return c.cfg.GatewayID
+}
+
 // Authorize envoie une requête d'autorisation au Control Plane et
 // retourne la décision (allow/deny).
-//
-// La requête est envoyée à :
-//   POST {control_plane.base_url}/api/v1/pep/authorize
-//
-// Headers :
-//   Content-Type: application/json
-//   X-PEP-ID:     {pep.id}
-//   X-PEP-TOKEN:  {pep.token}
-//
-// Body (JSON) — correspond au format attendu par le CP :
-//   {
-//     "subject": {
-//       "sub": "<sub from cert>",
-//       "username": "<username from cert>",
-//       "groups": ["<group1>", ...]
-//     },
-//     "action": "connect",
-//     "resource": {
-//       "type": "ssh",
-//       "host": "10.10.20.40",
-//       "port": 22
-//     },
-//     "context": {
-//       "src_ip": "10.10.20.10",
-//       "gateway_id": "ztna-gw-1"
-//     }
-//   }
-//
-// Réponse attendue du CP :
-//   {
-//     "decision": "allow" | "deny",
-//     "ttl_seconds": 300,
-//     "reason": "...",
-//     "policy_version": 1,
-//     "decision_id": "uuid"
-//   }
-//
-// TODO: Implémenter l'appel HTTP complet avec :
-//   - TLS vers le CP (utiliser control_plane.ca_file si configuré)
-//   - Timeouts configurables
-//   - Retry avec backoff en cas d'erreur réseau (attention au retry sur deny)
-//   - Journalisation structurée de chaque appel
-//
-// TODO: Supporter le mode mTLS entre Gateway et CP (évolution future)
 func (c *Client) Authorize(req *AuthzRequest) (*AuthzResponse, error) {
 	if c.httpClient == nil {
-		c.log.Debug("authorize appelé sans httpClient initialisé; mode skeleton/TODO")
+		return nil, fmt.Errorf("client HTTP non initialisé pour le CP")
 	}
 
-	c.log.Info("appel d'autorisation au Control Plane",
+	c.log.Debug("envoi requête authorize au CP",
 		"sub", req.Subject.Sub,
 		"action", req.Action,
 		"resource_type", req.Resource.Type,
@@ -95,14 +59,70 @@ func (c *Client) Authorize(req *AuthzRequest) (*AuthzResponse, error) {
 		"resource_port", req.Resource.Port,
 	)
 
-	// TODO: construire le body JSON conforme au format du CP
-	// TODO: créer un http.Client avec la tls.Config appropriée
-	// TODO: créer la requête POST avec les headers X-PEP-ID et X-PEP-TOKEN
-	// TODO: envoyer la requête et lire la réponse
-	// TODO: parser la réponse JSON en AuthzResponse
-	// TODO: gérer les erreurs HTTP (401, 403, 500, timeout, etc.)
+	// Construire le body JSON conforme au format du CP
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("sérialisation requête authorize: %w", err)
+	}
 
-	return nil, fmt.Errorf("TODO: Authorize non implémenté")
+	url := fmt.Sprintf("%s/api/v1/pep/authorize", c.cfg.ControlPlane.BaseURL)
+	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("création requête HTTP: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-PEP-ID", c.cfg.PEP.ID)
+	httpReq.Header.Set("X-PEP-TOKEN", c.cfg.PEP.Token)
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", domain.ErrControlPlaneUnreachable, err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("lecture réponse CP: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, fmt.Errorf("authentification PEP refusée (401) — vérifier pep.id/pep.token")
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("gateway non enregistrée auprès du CP (403)")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("réponse CP inattendue: status=%d body=%s", resp.StatusCode, string(respBody))
+	}
+
+	var authzResp AuthzResponse
+	if err := json.Unmarshal(respBody, &authzResp); err != nil {
+		return nil, fmt.Errorf("désérialisation réponse CP: %w", err)
+	}
+
+	// Le CP retourne "effect" mais notre struct lit "decision" — mapper si besoin
+	if authzResp.Decision == "" {
+		// Essayer de lire "effect" comme champ alternatif
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(respBody, &raw); err == nil {
+			if effectRaw, ok := raw["effect"]; ok {
+				var effect string
+				if json.Unmarshal(effectRaw, &effect) == nil {
+					authzResp.Decision = effect
+				}
+			}
+		}
+	}
+
+	c.log.Info("réponse authorize CP",
+		"decision", authzResp.Decision,
+		"decision_id", authzResp.DecisionID,
+		"reason", authzResp.Reason,
+		"ttl_seconds", authzResp.TTLSeconds,
+	)
+
+	return &authzResp, nil
 }
 
 // AuthzRequest est la requête d'autorisation envoyée au CP.

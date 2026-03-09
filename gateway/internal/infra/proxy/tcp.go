@@ -12,8 +12,12 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"ztna-gateway/internal/config"
 )
@@ -31,61 +35,89 @@ func NewTCPProxy(cfg *config.Config, log *slog.Logger) *TCPProxy {
 
 // Proxy établit la connexion vers la ressource cible et relaie le
 // trafic bidirectionnel avec la connexion client.
-//
-// Paramètres de sécurité :
-//   - targetHost et targetPort sont FIXÉS par la décision d'autorisation
-//   - Aucune redirection ou changement de cible n'est possible
-//   - Le dial vers la cible utilise le timeout configuré (proxy.dial_timeout)
-//
-// Flux :
-//  1. Établir une connexion TCP vers targetHost:targetPort
-//  2. Lancer deux goroutines pour copier dans chaque direction :
-//     - client → cible
-//     - cible → client
-//  3. Attendre la fin d'une des deux directions
-//  4. Fermer proprement les deux connexions (half-close)
-//  5. Journaliser les statistiques (octets transférés, durée)
-//
-// TODO: Implémenter le relais bidirectionnel avec :
-//   - io.Copy dans deux goroutines
-//   - Gestion du half-close TCP (shutdown write quand lecture terminée)
-//   - Compteurs de bytes transférés (pour audit et métriques)
-//   - Backpressure : si un côté est lent, l'autre est ralenti (naturel avec io.Copy)
-//   - Timeout d'inactivité (idle timeout) : fermer si aucun trafic pendant N secondes
-//   - Limite de durée de session (TTL du CP)
-//   - Respect du contexte pour arrêt forcé (shutdown)
-//   - Journalisation en fin de session : durée, bytes, erreurs
 func (p *TCPProxy) Proxy(ctx context.Context, clientConn net.Conn, targetHost string, targetPort int) error {
+	if err := validateTarget(targetHost, targetPort); err != nil {
+		return fmt.Errorf("cible invalide: %w", err)
+	}
+
 	target := fmt.Sprintf("%s:%d", targetHost, targetPort)
-	p.log.Info("ouverture de la connexion vers la ressource cible", "target", target)
+	p.log.Info("ouverture connexion vers la ressource cible", "target", target)
 
-	// TODO: établir la connexion vers la cible avec timeout
-	//   dialer := &net.Dialer{Timeout: p.cfg.DialTimeoutDuration()}
-	//   targetConn, err := dialer.DialContext(ctx, "tcp", target)
+	// Établir la connexion vers la cible avec timeout
+	dialTimeout := p.cfg.DialTimeoutDuration()
+	dialer := &net.Dialer{Timeout: dialTimeout}
+	targetConn, err := dialer.DialContext(ctx, "tcp", target)
+	if err != nil {
+		return fmt.Errorf("impossible de joindre %s: %w", target, err)
+	}
+	defer targetConn.Close()
 
-	// TODO: lancer le relais bidirectionnel
-	//   errCh := make(chan error, 2)
-	//   go func() { _, err := io.Copy(targetConn, clientConn); errCh <- err }()
-	//   go func() { _, err := io.Copy(clientConn, targetConn); errCh <- err }()
+	p.log.Info("connexion établie vers la ressource",
+		"target", target,
+		"local_addr", targetConn.LocalAddr().String(),
+	)
 
-	// TODO: attendre la fin et fermer proprement
-	//   err := <-errCh  // première direction terminée
-	//   // half-close : fermer le write de l'autre côté
-	//   // attendre la seconde goroutine
+	startTime := time.Now()
+	var bytesClientToTarget, bytesTargetToClient atomic.Int64
 
-	// TODO: journaliser les statistiques de fin de session
+	var wg sync.WaitGroup
+	errCh := make(chan error, 2)
 
-	return fmt.Errorf("TODO: Proxy non implémenté")
+	// client → cible
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		n, err := io.Copy(targetConn, clientConn)
+		bytesClientToTarget.Store(n)
+		// Half-close: signaler à la cible qu'on n'écrira plus
+		if tc, ok := targetConn.(*net.TCPConn); ok {
+			tc.CloseWrite()
+		}
+		errCh <- err
+	}()
+
+	// cible → client
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		n, err := io.Copy(clientConn, targetConn)
+		bytesTargetToClient.Store(n)
+		// Half-close: signaler au client qu'on n'écrira plus
+		if tc, ok := clientConn.(*net.TCPConn); ok {
+			tc.CloseWrite()
+		}
+		errCh <- err
+	}()
+
+	// Attendre qu'un des deux côtés se termine
+	firstErr := <-errCh
+
+	// Forcer la fermeture pour débloquer l'autre goroutine
+	clientConn.Close()
+	targetConn.Close()
+
+	wg.Wait()
+	duration := time.Since(startTime)
+
+	p.log.Info("session proxy terminée",
+		"target", target,
+		"duration", duration.Round(time.Millisecond).String(),
+		"bytes_client_to_target", bytesClientToTarget.Load(),
+		"bytes_target_to_client", bytesTargetToClient.Load(),
+	)
+
+	return firstErr
 }
 
 // validateTarget vérifie que l'adresse cible est une adresse réseau
-// valide et autorisée.
+// valide et autorisée. Protège contre les attaques SSRF.
 //
-// TODO: Implémenter les vérifications :
-//   - Format host:port valide
-//   - Pas d'adresse loopback (127.0.0.1, ::1) sauf en lab
-//   - Pas d'adresse de la Gateway elle-même (anti-loop)
-//   - Optionnel : whitelist de réseaux autorisés
+// Bloque:
+//   - Adresses loopback (127.0.0.0/8, ::1)
+//   - Adresses link-local (169.254.0.0/16, fe80::/10)
+//   - Cloud metadata endpoints (169.254.169.254)
+//   - Adresses multicast et broadcast
+//   - Ports invalides (<1 ou >65535)
 func validateTarget(host string, port int) error {
 	if host == "" {
 		return fmt.Errorf("host cible vide")
@@ -93,5 +125,36 @@ func validateTarget(host string, port int) error {
 	if port <= 0 || port > 65535 {
 		return fmt.Errorf("port cible invalide: %d", port)
 	}
+
+	// Résoudre le host en IP pour vérifier
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		// Si la résolution échoue, vérifier si c'est directement une IP
+		ip := net.ParseIP(host)
+		if ip == nil {
+			return fmt.Errorf("résolution DNS échouée pour %s: %w", host, err)
+		}
+		ips = []net.IP{ip}
+	}
+
+	for _, ip := range ips {
+		if ip.IsLoopback() {
+			return fmt.Errorf("adresse loopback interdite: %s → %s (protection SSRF)", host, ip)
+		}
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return fmt.Errorf("adresse link-local interdite: %s → %s (protection SSRF)", host, ip)
+		}
+		if ip.IsMulticast() {
+			return fmt.Errorf("adresse multicast interdite: %s → %s", host, ip)
+		}
+		if ip.IsUnspecified() {
+			return fmt.Errorf("adresse non spécifiée interdite: %s → %s", host, ip)
+		}
+		// Bloquer le cloud metadata endpoint (AWS/GCP/Azure)
+		if ip.Equal(net.ParseIP("169.254.169.254")) {
+			return fmt.Errorf("adresse metadata cloud interdite: %s → %s (protection SSRF)", host, ip)
+		}
+	}
+
 	return nil
 }

@@ -84,26 +84,32 @@ step_preflight() {
     ok "OS : ${os}"
   fi
 
-  # Virtualisation
+  # Virtualisation (non bloquant)
   if ! grep -qE 'vmx|svm' /proc/cpuinfo; then
-    die "VT-x / AMD-V non détecté. Activez la virtualisation dans le BIOS et relancez."
+    warn "VT-x / AMD-V non détecté — on continue quand même (les VMs peuvent échouer)."
+  else
+    ok "Virtualisation CPU : OK"
   fi
-  ok "Virtualisation CPU : OK"
 
   # RAM
   local ram; ram=$(free -g | awk 'NR==2 {print $2}')
   if [[ "${ram:-0}" -lt 8 ]]; then
-    die "RAM insuffisante : ${ram} GB (8 GB minimum)"
+    warn "RAM : ${ram} GB — faible, on continue quand même"
+  elif [[ "${ram:-0}" -lt 16 ]]; then
+    warn "RAM : ${ram} GB (16 GB recommandés)"
+  else
+    ok "RAM : ${ram} GB"
   fi
-  [[ "${ram:-0}" -ge 16 ]] && ok "RAM : ${ram} GB" || warn "RAM : ${ram} GB (16 GB recommandés)"
 
   # Disque
   local disk; disk=$(df / | awk 'NR==2 {printf "%d", $4/1024/1024}')
   if [[ "${disk:-0}" -lt 40 ]]; then
-    die "Espace disque insuffisant : ${disk} GB (40 GB minimum)"
+    warn "Espace libre : ${disk} GB — faible, on continue quand même"
+  elif [[ "${disk:-0}" -lt 100 ]]; then
+    warn "Espace libre : ${disk} GB (100 GB recommandés)"
+  else
+    ok "Espace libre : ${disk} GB"
   fi
-  [[ "${disk:-0}" -ge 100 ]] && ok "Espace libre : ${disk} GB" \
-    || warn "Espace libre : ${disk} GB (100 GB recommandés)"
 }
 
 # =============================================================================

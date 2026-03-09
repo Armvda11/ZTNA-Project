@@ -15,9 +15,15 @@
 //   - gRPC pour typage fort et streaming
 //   - Protocol Buffers pour la sérialisation
 //
-// TODO: Finaliser le choix du protocole de framing
-// TODO: Ajouter un numéro de version du protocole
 package protocol
+
+import (
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+)
 
 // ConnectRequest est la requête envoyée par le client à la Gateway.
 type ConnectRequest struct {
@@ -64,20 +70,53 @@ type ConnectResponse struct {
 	TTLSeconds int `json:"ttl_seconds,omitempty"`
 }
 
-// TODO: Implémenter les fonctions de framing :
-//
-//   const MaxMessageSize = 64 * 1024 // 64 KB max par message
-//
-//   // WriteMessage encode un message en JSON et l'envoie avec le préfixe de longueur.
-//   func WriteMessage(conn net.Conn, msg any) error {
-//       data, err := json.Marshal(msg)
-//       // Vérifier len(data) <= MaxMessageSize
-//       // Écrire [4 bytes big-endian len][data]
-//   }
-//
-//   // ReadMessage lit un message length-prefixed et le décode en JSON.
-//   func ReadMessage(conn net.Conn, dest any) error {
-//       // Lire 4 bytes → longueur
+// MaxMessageSize protège contre les messages surdimensionnés sur le tunnel.
+const MaxMessageSize = 1 << 20 // 1 Mo
+
+// WriteMessage sérialise msg en JSON et l'écrit sur conn avec un préfixe
+// de 4 octets big-endian (uint32) indiquant la taille du payload.
+func WriteMessage(conn net.Conn, msg any) error {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("sérialisation JSON: %w", err)
+	}
+	if len(data) > MaxMessageSize {
+		return fmt.Errorf("message trop grand: %d octets (max %d)", len(data), MaxMessageSize)
+	}
+	var header [4]byte
+	binary.BigEndian.PutUint32(header[:], uint32(len(data)))
+	if _, err := conn.Write(header[:]); err != nil {
+		return fmt.Errorf("écriture header: %w", err)
+	}
+	if _, err := conn.Write(data); err != nil {
+		return fmt.Errorf("écriture payload: %w", err)
+	}
+	return nil
+}
+
+// ReadMessage lit un message length-prefixed depuis conn et le désérialise
+// dans dest.
+func ReadMessage(conn net.Conn, dest any) error {
+	var header [4]byte
+	if _, err := io.ReadFull(conn, header[:]); err != nil {
+		return fmt.Errorf("lecture header: %w", err)
+	}
+	size := binary.BigEndian.Uint32(header[:])
+	if size > MaxMessageSize {
+		return fmt.Errorf("message trop grand: %d octets (max %d)", size, MaxMessageSize)
+	}
+	if size == 0 {
+		return fmt.Errorf("message vide reçu")
+	}
+	buf := make([]byte, size)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		return fmt.Errorf("lecture payload: %w", err)
+	}
+	if err := json.Unmarshal(buf, dest); err != nil {
+		return fmt.Errorf("désérialisation JSON: %w", err)
+	}
+	return nil
+}
 //       // Vérifier longueur <= MaxMessageSize
 //       // Lire N bytes → json.Unmarshal
 //   }

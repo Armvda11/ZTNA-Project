@@ -1,40 +1,53 @@
 // Package app fournit le câblage principal de la Gateway ZTNA.
 // Il assemble le listener mTLS, le handler de protocole CONNECT,
-// le client d'autorisation vers le Control Plane, le proxy TCP
-// et le gestionnaire de sessions.
+// le client d'autorisation vers le Control Plane, le proxy TCP,
+// le gestionnaire de sessions, le CRL auto-refresh, le cache de
+// décisions, le heartbeat et la télémétrie de session.
 package app
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
-	"ztna-gateway/internal/infra/authz"
-	"ztna-gateway/internal/infra/revocation"
+	authorize "ztna-gateway/internal/infra/authz"
+	crl "ztna-gateway/internal/infra/revocation"
 	"ztna-gateway/internal/config"
-	"ztna-gateway/internal/infra/cache"
+	decisioncache "ztna-gateway/internal/infra/cache"
+	"ztna-gateway/internal/infra/heartbeat"
 	"ztna-gateway/internal/infra/mtls"
-	"ztna-gateway/internal/usecase/connect"
+	protocol "ztna-gateway/internal/usecase/connect"
 	"ztna-gateway/internal/infra/proxy"
 	"ztna-gateway/internal/infra/session"
+	"ztna-gateway/internal/infra/telemetry"
+	tlsutil "ztna-gateway/internal/infra/tls"
 )
 
 // App regroupe tous les composants nécessaires à l'exécution de la Gateway ZTNA.
 type App struct {
-	cfg      *config.Config
-	log      *slog.Logger
-	listener *mtls.Listener
-	handler  *protocol.Handler
-	authz    *authorize.Client
-	proxy    *proxy.TCPProxy
-	sessions *session.Manager
-	crl      *crl.Store
-	cache    *decisioncache.Cache
+	cfg       *config.Config
+	log       *slog.Logger
+	listener  *mtls.Listener
+	handler   *protocol.Handler
+	authz     *authorize.Client
+	proxy     *proxy.TCPProxy
+	sessions  *session.Manager
+	crl       *crl.Store
+	cache     *decisioncache.Cache
+	heartbeat *heartbeat.Client
+	telemetry *telemetry.Client
 }
 
 // New construit une instance App à partir de la configuration et du logger.
 // Chaque composant est initialisé mais le listener n'est pas encore démarré.
 func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error) {
+	// Client HTTP partagé pour les communications vers le CP
+	cpHTTPClient, err := tlsutil.NewControlPlaneHTTPClient(cfg, 10*time.Second)
+	if err != nil {
+		log.Warn("client HTTP CP non initialisé — certaines fonctionnalités seront dégradées", "error", err)
+	}
+
 	// Client d'autorisation vers le Control Plane
 	authzClient := authorize.NewClient(cfg, log)
 
@@ -44,72 +57,144 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 	// Gestionnaire de sessions
 	sessionMgr := session.NewManager(log)
 
-	// Composants sécurité/résilience (préparation progressive)
-	crlStore := crl.NewStore()
+	// CRL store avec auto-refresh depuis le CP
+	var crlStore *crl.Store
+	if cpHTTPClient != nil {
+		crlURL := fmt.Sprintf("%s/pki/device-ca/crl", cfg.ControlPlane.BaseURL)
+		crlStore = crl.NewStoreWithConfig(crlURL, cfg.CRLRefreshInterval, cpHTTPClient, log)
+	} else {
+		crlStore = crl.NewStore()
+	}
+
+	// Cache de décisions d'autorisation
 	decisionCache := decisioncache.New(cfg.DecisionCacheMaxKeys)
+
+	// Heartbeat client
+	var hbClient *heartbeat.Client
+	if cpHTTPClient != nil {
+		hbClient = heartbeat.NewClient(cfg, cpHTTPClient, log)
+	}
+
+	// Telemetry client
+	var telemetryClient *telemetry.Client
+	if cpHTTPClient != nil {
+		telemetryClient = telemetry.NewClient(cfg, cpHTTPClient, log)
+	}
 
 	// Handler de protocole CONNECT
 	connectHandler := protocol.NewHandler(authzClient, tcpProxy, sessionMgr, log)
+	connectHandler.SetCRLStore(crlStore)
+	connectHandler.SetDecisionCache(decisionCache, cfg.DecisionCacheTTL)
+	connectHandler.SetCPDownMode(cfg.CPDownMode)
+	if telemetryClient != nil {
+		connectHandler.SetTelemetryClient(telemetryClient)
+	}
 
 	// Listener mTLS
 	listener, err := mtls.NewListener(cfg, connectHandler, log)
 	if err != nil {
 		return nil, fmt.Errorf("impossible de créer le listener mTLS: %w", err)
 	}
+	// Wire CRL into listener for handshake-time revocation check
+	listener.SetCRLStore(crlStore)
 
 	return &App{
-		cfg:      cfg,
-		log:      log,
-		listener: listener,
-		handler:  connectHandler,
-		authz:    authzClient,
-		proxy:    tcpProxy,
-		sessions: sessionMgr,
-		crl:      crlStore,
-		cache:    decisionCache,
+		cfg:       cfg,
+		log:       log,
+		listener:  listener,
+		handler:   connectHandler,
+		authz:     authzClient,
+		proxy:     tcpProxy,
+		sessions:  sessionMgr,
+		crl:       crlStore,
+		cache:     decisionCache,
+		heartbeat: hbClient,
+		telemetry: telemetryClient,
 	}, nil
 }
 
-// Run démarre le listener mTLS et accepte les connexions entrantes.
-//
-// Flux de traitement pour chaque connexion :
-//  1. Accepter la connexion TLS (le handshake mTLS vérifie le certificat client)
-//  2. Extraire l'identité du client depuis le certificat (SubjectRef)
-//  3. Lire la requête CONNECT du client
-//  4. Appeler le Control Plane pour obtenir une décision d'autorisation
-//  5. Si allow : établir la connexion proxy vers la ressource cible
-//  6. Si deny : envoyer une réponse d'erreur et fermer la connexion
-//  7. Relayer le trafic bidirectionnel
-//  8. Journaliser la fin de session
-//
-// TODO: Implémenter la boucle d'acceptation des connexions
-// TODO: Lancer le traitement de chaque connexion dans une goroutine
-// TODO: Limiter le nombre de connexions concurrentes
+// Run démarre tous les composants de la Gateway.
 func (a *App) Run(ctx context.Context) error {
-	_ = ctx
-	a.log.Info("démarrage du listener mTLS", "addr", a.cfg.Server.ListenAddr)
-	a.log.Debug("security components initialized",
-		"crl_ready", a.crl != nil,
-		"decision_cache_ready", a.cache != nil,
+	a.log.Info("démarrage de la Gateway ZTNA",
+		"addr", a.cfg.Server.ListenAddr,
+		"gateway_id", a.cfg.GatewayID,
+		"cp_down_mode", a.cfg.CPDownMode,
+		"decision_cache_ttl", a.cfg.DecisionCacheTTL.String(),
+		"crl_refresh_interval", a.cfg.CRLRefreshInterval.String(),
+		"heartbeat_every", a.cfg.HeartbeatEvery.String(),
 	)
 
-	// TODO: appeler a.listener.Listen(ctx) pour démarrer l'acceptation
-	// TODO: pour chaque connexion, appeler a.handler.Handle(ctx, conn) en goroutine
+	// 1. Démarrer le CRL auto-refresh (goroutine)
+	go func() {
+		if err := a.crl.StartAutoRefresh(ctx); err != nil {
+			a.log.Error("CRL auto-refresh terminé avec erreur", "error", err)
+		}
+	}()
 
-	return fmt.Errorf("TODO: Run non implémenté")
+	// 2. Démarrer le garbage collector de sessions (goroutine)
+	go a.sessions.StartGarbageCollector(ctx)
+
+	// 3. Démarrer le heartbeat (goroutine)
+	if a.heartbeat != nil {
+		go func() {
+			if err := a.heartbeat.StartLoop(ctx); err != nil {
+				a.log.Error("heartbeat loop terminé avec erreur", "error", err)
+			}
+		}()
+	}
+
+	// 4. Démarrer le listener mTLS (bloquant)
+	return a.listener.Listen(ctx)
 }
 
-// Close effectue l'arrêt graceful de la Gateway.
-//
-// TODO: Fermer le listener (plus de nouvelles connexions)
-// TODO: Attendre la fin des sessions actives (avec timeout)
-// TODO: Fermer les connexions proxy
+// Close effectue l'arrêt graceful de la Gateway :
+// 1. Ferme le listener (plus de nouvelles connexions)
+// 2. Attend que les sessions actives se terminent (avec timeout du contexte)
+// 3. Kill les sessions restantes si le deadline est dépassé
 func (a *App) Close(ctx context.Context) error {
-	a.log.Info("arrêt graceful de la gateway")
+	active := a.sessions.ActiveCount()
+	a.log.Info("arrêt graceful de la gateway",
+		"active_sessions", active,
+	)
 
-	// TODO: fermer le listener mTLS
-	// TODO: drainer les sessions actives
-	// TODO: fermer le gestionnaire de sessions
+	// 1. Fermer le listener (plus de nouvelles connexions)
+	if err := a.listener.Close(); err != nil {
+		a.log.Warn("erreur fermeture listener", "error", err)
+	}
 
+	// 2. Drain : attendre que les sessions actives se terminent
+	if active > 0 {
+		a.log.Info("drain des sessions actives en cours...", "count", active)
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+	drainLoop:
+		for {
+			select {
+			case <-ctx.Done():
+				a.log.Warn("deadline d'arrêt atteint, kill des sessions restantes",
+					"remaining", a.sessions.ActiveCount(),
+				)
+				break drainLoop
+			case <-ticker.C:
+				remaining := a.sessions.ActiveCount()
+				if remaining == 0 {
+					a.log.Info("toutes les sessions sont terminées")
+					break drainLoop
+				}
+				a.log.Info("sessions en cours de drain", "remaining", remaining)
+			}
+		}
+	}
+
+	// 3. Kill forcé des sessions restantes
+	for _, s := range a.sessions.ListActive() {
+		a.sessions.KillSession(s.ID)
+	}
+
+	// 4. Vidage du cache de décisions
+	a.cache.Clear()
+
+	a.log.Info("gateway arrêtée proprement")
 	return nil
 }

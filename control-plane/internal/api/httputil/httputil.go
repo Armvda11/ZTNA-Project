@@ -4,6 +4,7 @@ package httputil
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	domainErrors "control-plane/internal/domain/errors"
@@ -22,20 +23,29 @@ func WriteJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 // WriteError maps a domain error to the appropriate HTTP status code and
-// returns a JSON error envelope.
+// returns a JSON error envelope. Uses errors.Is for proper wrapped error
+// matching. Internal errors are sanitised to avoid leaking implementation details.
 func WriteError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
-	switch err {
-	case domainErrors.ErrUnauthorized:
+	msg := "erreur interne du serveur" // safe default
+
+	switch {
+	case errors.Is(err, domainErrors.ErrUnauthorized):
 		status = http.StatusUnauthorized
-	case domainErrors.ErrForbidden:
+		msg = err.Error()
+	case errors.Is(err, domainErrors.ErrForbidden):
 		status = http.StatusForbidden
-	case domainErrors.ErrInvalidInput:
+		msg = err.Error()
+	case errors.Is(err, domainErrors.ErrInvalidInput):
 		status = http.StatusBadRequest
-	case domainErrors.ErrNotFound:
+		msg = err.Error()
+	case errors.Is(err, domainErrors.ErrNotFound):
 		status = http.StatusNotFound
-	case domainErrors.ErrConflict:
+		msg = err.Error()
+	case errors.Is(err, domainErrors.ErrConflict):
 		status = http.StatusConflict
+		msg = err.Error()
 	}
-	WriteJSON(w, status, ErrorResponse{Error: err.Error()})
+
+	WriteJSON(w, status, ErrorResponse{Error: msg})
 }

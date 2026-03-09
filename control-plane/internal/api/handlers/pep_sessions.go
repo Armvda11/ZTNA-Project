@@ -25,6 +25,7 @@ func NewPEPSessionHandler(svc *session.Service) *PEPSessionHandler {
 // Body : SessionStartRequest (session_id, decision_id, subject_*, device_serial, resource_*).
 func (h *PEPSessionHandler) Start(w http.ResponseWriter, r *http.Request) {
 	var req session.StartRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
@@ -45,6 +46,7 @@ func (h *PEPSessionHandler) Start(w http.ResponseWriter, r *http.Request) {
 // Body : SessionEndRequest (session_id, bytes_in, bytes_out, duration_ms, end_reason).
 func (h *PEPSessionHandler) End(w http.ResponseWriter, r *http.Request) {
 	var req session.EndRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return

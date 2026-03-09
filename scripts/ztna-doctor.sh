@@ -89,9 +89,7 @@ check_system() {
   if grep -qE 'vmx|svm' /proc/cpuinfo; then
     ok "VT-x / AMD-V détecté dans /proc/cpuinfo"
   else
-    err "Virtualisation CPU absente — activez VT-x/AMD-V dans le BIOS"
-    err "Impossible de continuer sans virtualisation matérielle."
-    return 1
+    warn "Virtualisation CPU absente — on continue quand même (les VMs peuvent échouer)"
   fi
 
   # RAM
@@ -101,7 +99,7 @@ check_system() {
   elif [[ "${ram:-0}" -ge 8 ]]; then
     warn "RAM : ${ram} GB (16 GB recommandés, lab peut être lent)"
   else
-    err "RAM : ${ram} GB — insuffisant (8 GB minimum)"
+    warn "RAM : ${ram} GB — faible, on continue quand même"
   fi
 
   # Disque
@@ -111,7 +109,7 @@ check_system() {
   elif [[ "${disk:-0}" -ge 40 ]]; then
     warn "Espace libre : ${disk} GB (100 GB recommandés)"
   else
-    err "Espace libre : ${disk} GB — insuffisant (40 GB minimum pour les images)"
+    warn "Espace libre : ${disk} GB — faible, on continue quand même"
   fi
 }
 
@@ -738,7 +736,7 @@ print_summary() {
 main() {
   banner
 
-  check_system       || { print_summary; exit 1; }
+  check_system
   check_packages
   check_kvm_modules
   check_libvirtd

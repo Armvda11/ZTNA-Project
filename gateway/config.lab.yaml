@@ -23,8 +23,8 @@ control_plane:
 # Identifiants PEP pour l'authentification de la Gateway auprès du CP.
 # Correspondent à la configuration pep.tokens dans le CP.
 pep:
-  id: "ztna-gw-1"
-  token: "CHANGE_ME_LONG_RANDOM"           # ⚠️ Changer cette valeur !
+  id: "ztna-gw-01"
+  token: "ztna-lab-pep-secret-2026"
 
 proxy:
   dial_timeout: "10s"                      # Timeout de connexion vers les ressources cibles
