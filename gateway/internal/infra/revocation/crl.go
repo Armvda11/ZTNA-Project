@@ -30,6 +30,7 @@ type Store struct {
 	crlURL    string
 	client    *http.Client
 	interval  time.Duration
+	onUpdate  func(newlyRevoked []string) // callback appelé quand de nouveaux serials sont révoqués
 }
 
 // NewStore crée un store CRL vide.
@@ -49,6 +50,12 @@ func NewStoreWithConfig(crlURL string, interval time.Duration, client *http.Clie
 		client:   client,
 		log:      log,
 	}
+}
+
+// OnRevocationUpdate enregistre un callback appelé à chaque mise à jour
+// de la CRL avec la liste des serials nouvellement révoqués.
+func (s *Store) OnRevocationUpdate(cb func(newlyRevoked []string)) {
+	s.onUpdate = cb
 }
 
 // IsRevoked indique si un serial est actuellement marqué révoqué.
@@ -169,10 +176,30 @@ func (s *Store) fetchAndUpdate(ctx context.Context) error {
 		return fmt.Errorf("parsing CRL: %w", err)
 	}
 
+	// Détecter les serials nouvellement révoqués avant le Replace
+	var newlyRevoked []string
+	if s.onUpdate != nil {
+		s.mu.RLock()
+		for _, serial := range serials {
+			if _, existed := s.revoked[serial]; !existed {
+				newlyRevoked = append(newlyRevoked, serial)
+			}
+		}
+		s.mu.RUnlock()
+	}
+
 	s.Replace(serials)
 	s.mu.Lock()
 	s.lastFetch = time.Now()
 	s.mu.Unlock()
+
+	// Notifier le callback si de nouveaux serials ont été révoqués
+	if s.onUpdate != nil && len(newlyRevoked) > 0 {
+		s.log.Info("nouveaux serials révoqués détectés",
+			"count", len(newlyRevoked),
+		)
+		s.onUpdate(newlyRevoked)
+	}
 
 	s.log.Info("CRL mise à jour",
 		"revoked_count", len(serials),

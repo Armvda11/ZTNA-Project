@@ -104,10 +104,10 @@ func TestProxyTimeout(t *testing.T) {
 	targetPort := 9999
 
 	start := time.Now()
-	err := proxy.Proxy(ctx, clientConn, targetHost, targetPort)
+	result := proxy.Proxy(ctx, clientConn, targetHost, targetPort)
 	duration := time.Since(start)
 
-	if err == nil {
+	if result.Err == nil {
 		t.Error("Proxy() should return error for unreachable host")
 	}
 	if duration > 5*time.Second {

@@ -41,7 +41,7 @@ func subject(username, sub string, groups ...string) model.Subject {
 func TestEvaluate_AllowOnFirstMatch(t *testing.T) {
 	e := NewEvaluationEngine()
 	snap := snapshot(rule(1, "allow", "*", "ssh", "ssh", "*"))
-	effect, reason := e.Evaluate(snap, subject("alice", "sub-1"), "ssh", sshResource("10.10.30.10", 22))
+	effect, reason := e.Evaluate(snap, subject("alice", "sub-1"), "ssh", sshResource("10.10.30.10", 22), nil)
 	if effect != model.DecisionAllow {
 		t.Fatalf("expected allow, got %s (%s)", effect, reason)
 	}
@@ -50,7 +50,7 @@ func TestEvaluate_AllowOnFirstMatch(t *testing.T) {
 func TestEvaluate_DenyOnFirstMatch(t *testing.T) {
 	e := NewEvaluationEngine()
 	snap := snapshot(rule(1, "deny", "*", "ssh", "ssh", "*"))
-	effect, reason := e.Evaluate(snap, subject("bob", "sub-2"), "ssh", sshResource("10.10.30.10", 22))
+	effect, reason := e.Evaluate(snap, subject("bob", "sub-2"), "ssh", sshResource("10.10.30.10", 22), nil)
 	if effect != model.DecisionDeny {
 		t.Fatalf("expected deny, got %s (%s)", effect, reason)
 	}
@@ -59,7 +59,7 @@ func TestEvaluate_DenyOnFirstMatch(t *testing.T) {
 func TestEvaluate_DefaultDenyWhenNoRuleMatches(t *testing.T) {
 	e := NewEvaluationEngine()
 	snap := snapshot(rule(1, "allow", "user:alice", "ssh", "ssh", "*"))
-	effect, reason := e.Evaluate(snap, subject("bob", "sub-2"), "ssh", sshResource("10.10.30.10", 22))
+	effect, reason := e.Evaluate(snap, subject("bob", "sub-2"), "ssh", sshResource("10.10.30.10", 22), nil)
 	if effect != model.DecisionDeny {
 		t.Fatalf("expected default-deny, got %s", effect)
 	}
@@ -74,7 +74,7 @@ func TestEvaluate_FirstMatchWins(t *testing.T) {
 		rule(1, "deny", "user:alice", "ssh", "ssh", "*"),
 		rule(2, "allow", "*", "ssh", "ssh", "*"),
 	)
-	effect, _ := e.Evaluate(snap, subject("alice", "sub-1"), "ssh", sshResource("10.10.30.10", 22))
+	effect, _ := e.Evaluate(snap, subject("alice", "sub-1"), "ssh", sshResource("10.10.30.10", 22), nil)
 	if effect != model.DecisionDeny {
 		t.Fatalf("expected deny (first match), got %s", effect)
 	}
@@ -83,10 +83,10 @@ func TestEvaluate_FirstMatchWins(t *testing.T) {
 func TestEvaluate_UserMatch(t *testing.T) {
 	e := NewEvaluationEngine()
 	snap := snapshot(rule(1, "allow", "user:alice", "ssh", "ssh", "*"))
-	if effect, _ := e.Evaluate(snap, subject("alice", "sub-1"), "ssh", sshResource("h", 22)); effect != model.DecisionAllow {
+	if effect, _ := e.Evaluate(snap, subject("alice", "sub-1"), "ssh", sshResource("h", 22), nil); effect != model.DecisionAllow {
 		t.Fatal("user:alice should match alice")
 	}
-	if effect, _ := e.Evaluate(snap, subject("bob", "sub-2"), "ssh", sshResource("h", 22)); effect != model.DecisionDeny {
+	if effect, _ := e.Evaluate(snap, subject("bob", "sub-2"), "ssh", sshResource("h", 22), nil); effect != model.DecisionDeny {
 		t.Fatal("user:alice should not match bob")
 	}
 }
@@ -94,10 +94,10 @@ func TestEvaluate_UserMatch(t *testing.T) {
 func TestEvaluate_GroupMatch(t *testing.T) {
 	e := NewEvaluationEngine()
 	snap := snapshot(rule(1, "allow", "group:admins", "ssh", "ssh", "*"))
-	if effect, _ := e.Evaluate(snap, subject("alice", "sub-1", "admins", "devs"), "ssh", sshResource("h", 22)); effect != model.DecisionAllow {
+	if effect, _ := e.Evaluate(snap, subject("alice", "sub-1", "admins", "devs"), "ssh", sshResource("h", 22), nil); effect != model.DecisionAllow {
 		t.Fatal("group:admins should match member of admins")
 	}
-	if effect, _ := e.Evaluate(snap, subject("bob", "sub-2", "devs"), "ssh", sshResource("h", 22)); effect != model.DecisionDeny {
+	if effect, _ := e.Evaluate(snap, subject("bob", "sub-2", "devs"), "ssh", sshResource("h", 22), nil); effect != model.DecisionDeny {
 		t.Fatal("group:admins should not match non-member")
 	}
 }
@@ -106,7 +106,7 @@ func TestEvaluate_SubMatch(t *testing.T) {
 	e := NewEvaluationEngine()
 	sub := "abc-123"
 	snap := snapshot(rule(1, "allow", "sub:"+sub, "ssh", "ssh", "*"))
-	if effect, _ := e.Evaluate(snap, subject("alice", sub), "ssh", sshResource("h", 22)); effect != model.DecisionAllow {
+	if effect, _ := e.Evaluate(snap, subject("alice", sub), "ssh", sshResource("h", 22), nil); effect != model.DecisionAllow {
 		t.Fatal("sub: should match exact sub")
 	}
 }
@@ -114,10 +114,10 @@ func TestEvaluate_SubMatch(t *testing.T) {
 func TestEvaluate_WildcardResourceMatch(t *testing.T) {
 	e := NewEvaluationEngine()
 	snap := snapshot(rule(1, "allow", "*", "ssh", "ssh", "ssh:10.10.30.*"))
-	if effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("10.10.30.10", 22)); effect != model.DecisionAllow {
+	if effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("10.10.30.10", 22), nil); effect != model.DecisionAllow {
 		t.Fatal("prefix wildcard should match")
 	}
-	if effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("10.10.20.10", 22)); effect != model.DecisionDeny {
+	if effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("10.10.20.10", 22), nil); effect != model.DecisionDeny {
 		t.Fatal("prefix wildcard should not match different subnet")
 	}
 }
@@ -125,10 +125,10 @@ func TestEvaluate_WildcardResourceMatch(t *testing.T) {
 func TestEvaluate_ExactResourceMatch(t *testing.T) {
 	e := NewEvaluationEngine()
 	snap := snapshot(rule(1, "allow", "*", "ssh", "ssh", "ssh:10.10.30.10:22"))
-	if effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("10.10.30.10", 22)); effect != model.DecisionAllow {
+	if effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("10.10.30.10", 22), nil); effect != model.DecisionAllow {
 		t.Fatal("exact match should match")
 	}
-	if effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("10.10.30.99", 22)); effect != model.DecisionDeny {
+	if effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("10.10.30.99", 22), nil); effect != model.DecisionDeny {
 		t.Fatal("exact match should not match different host")
 	}
 }
@@ -136,7 +136,7 @@ func TestEvaluate_ExactResourceMatch(t *testing.T) {
 func TestEvaluate_ActionMismatch(t *testing.T) {
 	e := NewEvaluationEngine()
 	snap := snapshot(rule(1, "allow", "*", "rdp", "ssh", "*"))
-	if effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("h", 22)); effect != model.DecisionDeny {
+	if effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("h", 22), nil); effect != model.DecisionDeny {
 		t.Fatal("action mismatch should result in default-deny")
 	}
 }
@@ -144,7 +144,7 @@ func TestEvaluate_ActionMismatch(t *testing.T) {
 func TestEvaluate_ResourceTypeMismatch(t *testing.T) {
 	e := NewEvaluationEngine()
 	snap := snapshot(rule(1, "allow", "*", "ssh", "rdp", "*"))
-	if effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("h", 22)); effect != model.DecisionDeny {
+	if effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("h", 22), nil); effect != model.DecisionDeny {
 		t.Fatal("resource type mismatch should result in default-deny")
 	}
 }
@@ -152,7 +152,7 @@ func TestEvaluate_ResourceTypeMismatch(t *testing.T) {
 func TestEvaluate_EmptySnapshot(t *testing.T) {
 	e := NewEvaluationEngine()
 	snap := snapshot()
-	effect, reason := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("h", 22))
+	effect, reason := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("h", 22), nil)
 	if effect != model.DecisionDeny || reason != "default-deny" {
 		t.Fatalf("empty snapshot should default-deny, got %s/%s", effect, reason)
 	}
@@ -182,5 +182,69 @@ func TestValidateEffect(t *testing.T) {
 		if (err != nil) != tc.wantErr {
 			t.Errorf("ValidateEffect(%q): wantErr=%v, got err=%v", tc.input, tc.wantErr, err)
 		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// Context-aware evaluation tests
+// ─────────────────────────────────────────────────────────────
+
+func ruleWithTrust(id int64, effect, subject, action, resType, resMatch, trust string) model.PolicyRule {
+	r := rule(id, effect, subject, action, resType, resMatch)
+	r.RequiredDeviceTrust = trust
+	return r
+}
+
+func ruleWithHours(id int64, effect, subject, action, resType, resMatch, hours string) model.PolicyRule {
+	r := rule(id, effect, subject, action, resType, resMatch)
+	r.AllowedHours = hours
+	return r
+}
+
+func TestEvaluate_DeviceTrust_HighRequired_HighProvided(t *testing.T) {
+	e := NewEvaluationEngine()
+	snap := snapshot(ruleWithTrust(1, "allow", "*", "ssh", "ssh", "*", "high"))
+	ctx := map[string]any{"device_trust": "high"}
+	effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("h", 22), ctx)
+	if effect != model.DecisionAllow {
+		t.Fatal("high trust provided should match high required")
+	}
+}
+
+func TestEvaluate_DeviceTrust_HighRequired_LowProvided(t *testing.T) {
+	e := NewEvaluationEngine()
+	snap := snapshot(ruleWithTrust(1, "allow", "*", "ssh", "ssh", "*", "high"))
+	ctx := map[string]any{"device_trust": "low"}
+	effect, reason := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("h", 22), ctx)
+	if effect != model.DecisionDeny {
+		t.Fatalf("low trust should not match high required, got %s (%s)", effect, reason)
+	}
+}
+
+func TestEvaluate_DeviceTrust_NoContextProvided(t *testing.T) {
+	e := NewEvaluationEngine()
+	snap := snapshot(ruleWithTrust(1, "allow", "*", "ssh", "ssh", "*", "medium"))
+	effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("h", 22), nil)
+	if effect != model.DecisionDeny {
+		t.Fatal("missing device_trust context should deny")
+	}
+}
+
+func TestEvaluate_DeviceTrust_MediumRequired_HighProvided(t *testing.T) {
+	e := NewEvaluationEngine()
+	snap := snapshot(ruleWithTrust(1, "allow", "*", "ssh", "ssh", "*", "medium"))
+	ctx := map[string]any{"device_trust": "high"}
+	effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("h", 22), ctx)
+	if effect != model.DecisionAllow {
+		t.Fatal("high trust should satisfy medium requirement")
+	}
+}
+
+func TestEvaluate_NoConditions_NilContext(t *testing.T) {
+	e := NewEvaluationEngine()
+	snap := snapshot(rule(1, "allow", "*", "ssh", "ssh", "*"))
+	effect, _ := e.Evaluate(snap, subject("u", "s"), "ssh", sshResource("h", 22), nil)
+	if effect != model.DecisionAllow {
+		t.Fatal("rule without conditions should allow regardless of nil context")
 	}
 }

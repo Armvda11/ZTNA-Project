@@ -21,9 +21,11 @@ import (
 
 	authorize "ztna-gateway/internal/infra/authz"
 	decisioncache "ztna-gateway/internal/infra/cache"
+	"ztna-gateway/internal/config"
 	"ztna-gateway/internal/core/domain"
 	"ztna-gateway/internal/infra/mtls"
 	"ztna-gateway/internal/infra/proxy"
+	resourceclient "ztna-gateway/internal/infra/resource"
 	crl "ztna-gateway/internal/infra/revocation"
 	"ztna-gateway/internal/infra/session"
 	"ztna-gateway/internal/infra/telemetry"
@@ -40,6 +42,8 @@ type Handler struct {
 	cacheTTL   time.Duration
 	cpDownMode string // "deny" ou "cache_allow"
 	telemetry  *telemetry.Client
+	cfg        *config.Config // pour résoudre les routes (legacy)
+	resources  *resourceclient.Client // résolution de ressource via CP
 }
 
 // NewHandler crée un nouveau handler de protocole CONNECT.
@@ -72,6 +76,16 @@ func (h *Handler) SetCPDownMode(mode string) {
 // SetTelemetryClient configure le client de télémétrie de session.
 func (h *Handler) SetTelemetryClient(tc *telemetry.Client) {
 	h.telemetry = tc
+}
+
+// SetConfig attache la configuration pour la résolution de routes.
+func (h *Handler) SetConfig(cfg *config.Config) {
+	h.cfg = cfg
+}
+
+// SetResourceClient configure le client de résolution de ressource via le CP.
+func (h *Handler) SetResourceClient(rc *resourceclient.Client) {
+	h.resources = rc
 }
 
 // HandleConnection implémente mtls.ConnectionHandler.
@@ -133,13 +147,103 @@ func (h *Handler) HandleConnection(conn net.Conn, clientCert *x509.Certificate) 
 		h.sendDeny(conn, fmt.Sprintf("action non supportée: %s", req.Action), "")
 		return
 	}
-	if req.Resource.Host == "" || req.Resource.Port <= 0 || req.Resource.Type == "" {
+	// Name-based resolution required; host:port fallback is forbidden.
+	if req.Resource.Name == "" && (req.Resource.Host == "" || req.Resource.Port <= 0 || req.Resource.Type == "") {
 		h.log.Warn("requête CONNECT incomplète", "sub", subject.Sub, "resource", req.Resource)
-		h.sendDeny(conn, "requête CONNECT invalide: host/port/type manquant", "")
+		h.sendDeny(conn, "requête CONNECT invalide: resource name ou host/port/type manquant", "")
 		return
 	}
 
-	// 5. Consulter le cache de décisions ou appeler le CP
+	// 5. Résoudre la ressource publiée : priorité au nom via le CP
+	var targetHost string
+	var targetPort int
+	resourceType := req.Resource.Type
+	resourceName := req.Resource.Name
+	accessMode := ""
+
+	if resourceName != "" && h.resources != nil {
+		// Name-based resolution via Control Plane
+		resolved, err := h.resources.GetResource(resourceName)
+		if err != nil {
+			h.log.Warn("résolution ressource échouée",
+				"sub", subject.Sub,
+				"resource_name", resourceName,
+				"error", err,
+			)
+			h.sendDeny(conn, fmt.Sprintf("ressource inconnue: %s", resourceName), "")
+			return
+		}
+		// Parse backend "host:port"
+		bHost, bPortStr, err := net.SplitHostPort(resolved.Backend)
+		if err != nil {
+			h.log.Error("backend invalide pour ressource publiée", "resource", resourceName, "backend", resolved.Backend, "error", err)
+			h.sendDeny(conn, "erreur interne: backend invalide", "")
+			return
+		}
+		var bPort int
+		if _, err := fmt.Sscanf(bPortStr, "%d", &bPort); err != nil || bPort <= 0 || bPort > 65535 {
+			h.log.Error("port backend invalide", "resource", resourceName, "backend", resolved.Backend)
+			h.sendDeny(conn, "erreur interne: port backend invalide", "")
+			return
+		}
+		targetHost = bHost
+		targetPort = bPort
+		resourceType = resolved.Type
+		accessMode = resolved.AccessMode
+		// Override host/port for authorize call with resolved values.
+		req.Resource.Host = bHost
+		req.Resource.Port = bPort
+		req.Resource.Type = resourceType
+		h.log.Info("ressource résolue via CP",
+			"resource_name", resourceName,
+			"backend", resolved.Backend,
+			"type", resourceType,
+			"access_mode", accessMode,
+		)
+	} else if req.Resource.Host != "" && req.Resource.Port > 0 {
+		// Legacy host:port — only if routes are configured (no raw fallback)
+		canonical := fmt.Sprintf("%s:%s:%d", req.Resource.Type, req.Resource.Host, req.Resource.Port)
+		if h.cfg != nil && len(h.cfg.Routes) > 0 {
+			backend, found := h.cfg.ResolveRoute(req.Resource.Type, canonical)
+			if !found {
+				h.log.Warn("aucune route configurée pour cette ressource",
+					"sub", subject.Sub,
+					"canonical", canonical,
+				)
+				h.sendDeny(conn, "ressource non configurée sur cette gateway", "")
+				return
+			}
+			bHost, bPortStr, err := net.SplitHostPort(backend)
+			if err != nil {
+				h.log.Error("route backend invalide", "backend", backend, "error", err)
+				h.sendDeny(conn, "erreur interne: route backend invalide", "")
+				return
+			}
+			var bPort int
+			if _, err := fmt.Sscanf(bPortStr, "%d", &bPort); err != nil || bPort <= 0 || bPort > 65535 {
+				h.log.Error("port backend invalide", "backend", backend, "port", bPortStr)
+				h.sendDeny(conn, "erreur interne: port backend invalide", "")
+				return
+			}
+			targetHost = bHost
+			targetPort = bPort
+			h.log.Info("route résolue (legacy)", "canonical", canonical, "backend", backend)
+		} else {
+			// NO FALLBACK: direct host:port without routes is forbidden.
+			h.log.Warn("accès par host:port refusé — aucune route configurée et aucun nom de ressource fourni",
+				"sub", subject.Sub,
+				"host", req.Resource.Host,
+				"port", req.Resource.Port,
+			)
+			h.sendDeny(conn, "accès refusé: utilisez un nom de ressource publié", "")
+			return
+		}
+	} else {
+		h.sendDeny(conn, "requête CONNECT invalide: nom de ressource requis", "")
+		return
+	}
+
+	// 6. Consulter le cache de décisions ou appeler le CP (authorize)
 	decision, err := h.resolveDecision(subject, req, remoteAddr)
 	if err != nil {
 		h.log.Error("erreur résolution autorisation",
@@ -160,7 +264,7 @@ func (h *Handler) HandleConnection(conn net.Conn, clientCert *x509.Certificate) 
 		"policy_version", decision.PolicyVersion,
 	)
 
-	// 6. Si deny → répondre et fermer
+	// Si deny → répondre et fermer
 	if decision.Decision != "allow" {
 		reason := decision.Reason
 		if reason == "" {
@@ -191,12 +295,14 @@ func (h *Handler) HandleConnection(conn net.Conn, clientCert *x509.Certificate) 
 		Sub:          subject.Sub,
 		Username:     subject.Username,
 		ResourceType: req.Resource.Type,
+		ResourceName: resourceName,
 		ResourceHost: req.Resource.Host,
 		ResourcePort: req.Resource.Port,
 		SourceIP:     remoteAddr,
 		DecisionID:   decision.DecisionID,
 		TTLSeconds:   decision.TTLSeconds,
 		CancelFunc:   cancel,
+		CertSerial:   certSerial,
 	}
 	sessionID, err := h.sessions.Register(sess)
 	if err != nil {
@@ -221,6 +327,7 @@ func (h *Handler) HandleConnection(conn net.Conn, clientCert *x509.Certificate) 
 			SubjectSub:      subject.Sub,
 			SubjectUsername: subject.Username,
 			ResourceType:    req.Resource.Type,
+			ResourceName:    resourceName,
 			ResourceMatch:   fmt.Sprintf("%s:%s:%d", req.Resource.Type, req.Resource.Host, req.Resource.Port),
 		})
 	}
@@ -239,47 +346,34 @@ func (h *Handler) HandleConnection(conn net.Conn, clientCert *x509.Certificate) 
 
 	// 11. Proxier le trafic (ctx transporte le timeout TTL)
 	startTime := time.Now()
-	proxyErr := h.proxy.Proxy(ctx, conn, req.Resource.Host, req.Resource.Port)
+	result := h.proxy.Proxy(ctx, conn, targetHost, targetPort)
 
 	// 12. Fin de session — métriques et cleanup
 	duration := time.Since(startTime)
-	endReason := "normal"
-	if proxyErr != nil {
-		if ctx.Err() != nil {
-			endReason = "ttl_expired"
-		} else {
-			endReason = "proxy_error"
-		}
-	}
+	endReason := result.EndReason
 
-	h.sessions.SetEndStats(sessionID, 0, 0, endReason) // bytes set by proxy
+	h.sessions.SetEndStats(sessionID, result.BytesIn, result.BytesOut, endReason)
 	h.sessions.Unregister(sessionID)
 
 	// 13. Notifier le CP de la fin de session
 	if h.telemetry != nil {
 		h.telemetry.NotifyEnd(ctx, telemetry.SessionEndRequest{
 			SessionID:  sessionID,
+			BytesIn:    result.BytesIn,
+			BytesOut:   result.BytesOut,
 			DurationMs: duration.Milliseconds(),
 			EndReason:  endReason,
 		})
 	}
 
-	if proxyErr != nil {
-		h.log.Info("session terminée",
-			"session_id", sessionID,
-			"sub", subject.Sub,
-			"reason", endReason,
-			"duration_ms", duration.Milliseconds(),
-			"error", proxyErr,
-		)
-	} else {
-		h.log.Info("session terminée",
-			"session_id", sessionID,
-			"sub", subject.Sub,
-			"reason", endReason,
-			"duration_ms", duration.Milliseconds(),
-		)
-	}
+	h.log.Info("session terminée",
+		"session_id", sessionID,
+		"sub", subject.Sub,
+		"reason", endReason,
+		"duration_ms", duration.Milliseconds(),
+		"bytes_in", result.BytesIn,
+		"bytes_out", result.BytesOut,
+	)
 }
 
 // resolveDecision consulte le cache puis le CP pour obtenir une décision.
@@ -306,6 +400,7 @@ func (h *Handler) resolveDecision(subject domain.SubjectRef, req ConnectRequest,
 		Action:  req.Action,
 		Resource: authorize.ResourceRef{
 			Type: req.Resource.Type,
+			Name: req.Resource.Name,
 			Host: req.Resource.Host,
 			Port: req.Resource.Port,
 		},

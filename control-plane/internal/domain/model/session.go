@@ -10,12 +10,13 @@ type Session struct {
 	SubjectUsername string `json:"subject_username"`
 	DeviceSerial    string `json:"device_serial"`
 	ResourceType    string `json:"resource_type"`
+	ResourceName    string `json:"resource_name,omitempty"`
 	ResourceMatch   string `json:"resource_match"`
 	StartTime       string `json:"start_time"` // RFC3339 UTC
 	EndTime         string `json:"end_time,omitempty"`
 	BytesIn         int64  `json:"bytes_in"`
 	BytesOut        int64  `json:"bytes_out"`
 	DurationMs      int64  `json:"duration_ms"`
-	// EndReason : "eof" | "error" | "revoked" | "dial_error"
+	// EndReason : "eof" | "error" | "cert_revoked" | "dial_error"
 	EndReason string `json:"end_reason,omitempty"`
 }

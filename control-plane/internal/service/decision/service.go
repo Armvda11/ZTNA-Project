@@ -36,7 +36,7 @@ func (s *Service) Authorize(ctx context.Context, req AuthorizeRequest) (model.De
 		return model.Decision{}, err
 	}
 
-	effect, reason := s.policy.Evaluate(snapshot, req.Subject, req.Action, req.Resource)
+	effect, reason := s.policy.Evaluate(snapshot, req.Subject, req.Action, req.Resource, req.Context)
 	// Use UUID v4 to guarantee global uniqueness even under concurrent load.
 	decisionID := "dec-" + uuid.New().String()
 

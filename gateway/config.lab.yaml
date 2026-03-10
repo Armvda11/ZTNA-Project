@@ -34,3 +34,14 @@ proxy:
 logging:
   level: "debug"                           # debug en lab pour visibilité maximale
   format: "text"                           # text en lab pour lisibilité ; json en prod
+
+# Table de routes : ressource logique → backend réel.
+# La gateway résout la cible via cette table au lieu de faire confiance
+# au host:port envoyé par le client (modèle ZTNA strict).
+routes:
+  - resource_type: "ssh"
+    resource_match: "ssh:lan-app:22"
+    target: "10.10.30.15:22"
+  - resource_type: "http"
+    resource_match: "http:lan-app:80"
+    target: "10.10.30.15:80"

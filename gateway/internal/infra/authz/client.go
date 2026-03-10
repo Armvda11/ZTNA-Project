@@ -138,6 +138,7 @@ type AuthzRequest struct {
 // Correspond au format resourceRequest du CP.
 type ResourceRef struct {
 	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
 	Host string `json:"host"`
 	Port int    `json:"port"`
 }

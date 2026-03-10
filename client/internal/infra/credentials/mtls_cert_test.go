@@ -74,7 +74,7 @@ func newTestCA(t *testing.T) *testCA {
 }
 
 // mockCPHandler retourne un handler HTTP qui simule l'endpoint
-// POST /api/v1/credentials/mtls-cert du Control Plane.
+// POST /api/v1/credentials/device-cert du Control Plane.
 // Il parse le CSR, signe un certificat avec la CA de test, et le retourne.
 func mockCPHandler(t *testing.T, ca *testCA) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +83,7 @@ func mockCPHandler(t *testing.T, ca *testCA) http.HandlerFunc {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if r.URL.Path != "/api/v1/credentials/mtls-cert" {
+		if r.URL.Path != "/api/v1/credentials/device-cert" {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
@@ -97,7 +97,7 @@ func mockCPHandler(t *testing.T, ca *testCA) http.HandlerFunc {
 
 		// Parser le corps JSON
 		var req struct {
-			CSR string `json:"csr"`
+			CSRPEM string `json:"csr_pem"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -105,7 +105,7 @@ func mockCPHandler(t *testing.T, ca *testCA) http.HandlerFunc {
 		}
 
 		// Parser le CSR PEM
-		block, _ := pem.Decode([]byte(req.CSR))
+		block, _ := pem.Decode([]byte(req.CSRPEM))
 		if block == nil {
 			http.Error(w, "invalid CSR PEM", http.StatusBadRequest)
 			return
@@ -133,11 +133,17 @@ func mockCPHandler(t *testing.T, ca *testCA) http.HandlerFunc {
 		certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 
 		resp := struct {
-			Certificate string `json:"certificate"`
-			ExpiresAt   string `json:"expires_at"`
+			CertificatePEM string `json:"certificate_pem"`
+			CACertPEM      string `json:"ca_cert_pem"`
+			Serial         string `json:"serial"`
+			ExpiresAt      string `json:"expires_at"`
+			Fingerprint    string `json:"fingerprint"`
 		}{
-			Certificate: string(certPEM),
-			ExpiresAt:   certTemplate.NotAfter.Format(time.RFC3339),
+			CertificatePEM: string(certPEM),
+			CACertPEM:      string(ca.certPEM),
+			Serial:         "64",
+			ExpiresAt:      certTemplate.NotAfter.Format(time.RFC3339),
+			Fingerprint:    "sha256:test",
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -172,12 +178,16 @@ func TestRequestMTLSCertFromCP_Success(t *testing.T) {
 	// Vérifier que le certificat et la clé sont sauvegardés
 	certPath := tempDir + "/client.crt"
 	keyPath := tempDir + "/client.key"
+	caPath := tempDir + "/client-ca.crt"
 
 	if _, err := os.Stat(certPath); os.IsNotExist(err) {
 		t.Errorf("Certificate file not created at %s", certPath)
 	}
 	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
 		t.Errorf("Private key file not created at %s", keyPath)
+	}
+	if _, err := os.Stat(caPath); os.IsNotExist(err) {
+		t.Errorf("CA certificate file not created at %s", caPath)
 	}
 
 	// Vérifier que le cert et la clé forment une paire valide

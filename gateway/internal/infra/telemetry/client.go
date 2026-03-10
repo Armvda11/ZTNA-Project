@@ -44,6 +44,7 @@ type SessionStartRequest struct {
 	SubjectSub      string `json:"subject_sub"`
 	SubjectUsername string `json:"subject_username"`
 	ResourceType    string `json:"resource_type"`
+	ResourceName    string `json:"resource_name,omitempty"`
 	ResourceMatch   string `json:"resource_match"`
 	DeviceSerial    string `json:"device_serial,omitempty"`
 }

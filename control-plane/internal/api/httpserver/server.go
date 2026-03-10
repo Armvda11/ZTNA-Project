@@ -38,6 +38,8 @@ type Dependencies struct {
 	AdminPolicies       *handlers.AdminPoliciesHandler
 	AdminAudit          *handlers.AdminAuditHandler
 	WhoamiHandler       *handlers.WhoamiHandler
+	ResourceHandler     *handlers.ResourceHandler
+	PEPResourceHandler  *handlers.PEPResourceHandler
 	OIDC                *middleware.OIDCValidator
 	PEPAuth             *middleware.PEPAuth
 	AdminAuth           *middleware.AdminAuth
@@ -72,6 +74,14 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 			}
 		})
 
+		// Resource discovery for authenticated users.
+		if deps.ResourceHandler != nil {
+			r.Group(func(r chi.Router) {
+				r.Use(deps.OIDC.RequireUser)
+				r.Get("/resources", deps.ResourceHandler.ListForUser)
+			})
+		}
+
 		// Token mode exposes PEP endpoints on the public API listener.
 		if cfg.PEP.AuthMode != "mtls" {
 			r.Route("/pep", func(r chi.Router) {
@@ -86,6 +96,9 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 				if deps.PEPSessionHandler != nil {
 					r.Post("/sessions/start", deps.PEPSessionHandler.Start)
 					r.Post("/sessions/end", deps.PEPSessionHandler.End)
+				}
+				if deps.PEPResourceHandler != nil {
+					r.Get("/resources/{name}", deps.PEPResourceHandler.Resolve)
 				}
 			})
 		}
@@ -102,6 +115,12 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 			}
 			if deps.PEPSessionHandler != nil {
 				r.Get("/sessions", deps.PEPSessionHandler.List)
+			}
+			if deps.ResourceHandler != nil {
+				r.Get("/resources", deps.ResourceHandler.AdminList)
+				r.Post("/resources", deps.ResourceHandler.AdminCreate)
+				r.Put("/resources/{name}", deps.ResourceHandler.AdminUpdate)
+				r.Delete("/resources/{name}", deps.ResourceHandler.AdminDelete)
 			}
 		})
 	})
@@ -154,6 +173,9 @@ func New(cfg *config.Config, deps Dependencies) (*Server, error) {
 			if deps.PEPSessionHandler != nil {
 				r.Post("/sessions/start", deps.PEPSessionHandler.Start)
 				r.Post("/sessions/end", deps.PEPSessionHandler.End)
+			}
+			if deps.PEPResourceHandler != nil {
+				r.Get("/resources/{name}", deps.PEPResourceHandler.Resolve)
 			}
 		})
 

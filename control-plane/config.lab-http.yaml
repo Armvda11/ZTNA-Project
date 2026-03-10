@@ -83,3 +83,6 @@ sshca:
 
 policy:
   seed_file: ./policies.yaml
+
+resource:
+  seed_file: ./resources.yaml

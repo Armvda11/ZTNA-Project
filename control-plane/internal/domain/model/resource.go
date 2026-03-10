@@ -9,6 +9,8 @@ type ResourceType string
 const (
 	ResourceSSH  ResourceType = "ssh"  // Accès terminal SSH
 	ResourceHTTP ResourceType = "http" // Accès applicatif HTTP (proxy TCP brut)
+	ResourceWeb  ResourceType = "web"  // Accès web via reverse proxy HTTP
+	ResourceDB   ResourceType = "db"   // Accès base de données via tunnel TCP
 )
 
 // Resource représente la ressource à laquelle un sujet tente d'accéder.

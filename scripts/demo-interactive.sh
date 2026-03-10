@@ -39,6 +39,7 @@ CP_IP="10.10.20.30"
 GW_IP="10.10.10.20"
 CLIENT_IP="10.10.10.10"
 APP_IP="10.10.30.10"
+BACKEND_IP="10.10.30.15"
 
 # Colors (ANSI)
 RST='\033[0m'
@@ -61,9 +62,11 @@ FG_BLACK='\033[30m'
 SCENARIO=1
 RES_TYPE="ssh"
 RES_PORT=22
-RES_HOST="10.10.30.10"
+RES_HOST="lan-app"
+RES_BACKEND="${BACKEND_IP}:22"
 RES_DESC="Serveur SSH Backend"
-RES_PROTO="ssh"
+RES_PROTO="SSH"
+RES_NAME="ssh-dev-01"
 
 # Consistent IDs
 CERT_SERIAL="3A:2B:1C:0D:4E:5F:6A:7B"
@@ -151,8 +154,10 @@ SCENARIO=$SCENARIO
 RES_TYPE=$RES_TYPE
 RES_PORT=$RES_PORT
 RES_HOST=$RES_HOST
+RES_BACKEND=$RES_BACKEND
 RES_DESC="$RES_DESC"
 RES_PROTO=$RES_PROTO
+RES_NAME=$RES_NAME
 EOF
 }
 
@@ -194,9 +199,10 @@ step_0() {
     "  ${DIM}Prêt pour la démonstration${RST}" \
     "" \
     "  ${DIM}Commandes disponibles :${RST}" \
-    "  ${DIM}  ztna login     → Auth OIDC${RST}" \
-    "  ${DIM}  ztna cert      → Certificat device${RST}" \
-    "  ${DIM}  ztna connect   → Tunnel mTLS${RST}"
+    "  ${DIM}  ztna login      → Auth OIDC${RST}" \
+    "  ${DIM}  ztna cert       → Certificat device${RST}" \
+    "  ${DIM}  ztna resources  → Lister ressources publiées${RST}" \
+    "  ${DIM}  ztna access     → Accéder à une ressource${RST}"
 
   set_pane gateway \
     "$(hdr_idle "GATEWAY PEP" "$GW_IP")" \
@@ -234,7 +240,7 @@ step_0() {
     "  ${GREEN}  │      │${RST}   mTLS     ${YELLOW}  │  Proxy   │${RST}   authz      ${CYAN}  │  PKI       │${RST}      ${MAGENTA}  │ HTTP   │${RST}" \
     "  ${GREEN}  │ OIDC │${RST}  ════════  ${YELLOW}  │  CRL     │${RST}  ═════════   ${CYAN}  │  Policy    │${RST}      ${MAGENTA}  │        │${RST}" \
     "  ${GREEN}  │ Cert │${RST}   TLS1.3   ${YELLOW}  │  SSRF    │${RST}   PEP auth   ${CYAN}  │  OIDC      │${RST}      ${MAGENTA}  │  :22   │${RST}" \
-    "  ${GREEN}  └──────┘${RST}            ${YELLOW}  └──────────┘${RST}              ${CYAN}  └────────────┘${RST}      ${MAGENTA}  │  :8080 │${RST}" \
+    "  ${GREEN}  └──────┘${RST}            ${YELLOW}  └──────────┘${RST}              ${CYAN}  └────────────┘${RST}      ${MAGENTA}  │  :80   │${RST}" \
     "  ${DIM}  10.10.10.10${RST}          ${DIM}  10.10.10.20${RST}                ${DIM}  10.10.20.30${RST}        ${MAGENTA}  └────────┘${RST}" \
     "  ${DIM}  (WAN)${RST}                ${DIM}  (WAN/DMZ/LAN)${RST}              ${DIM}  (DMZ)${RST}              ${DIM}  10.10.30.10${RST}"
 }
@@ -244,17 +250,17 @@ step_1() {
     "" \
     "  ${BOLD}Scénarios de démonstration disponibles :${RST}" \
     "" \
-    "  ${BOLD}${GREEN}  [1]${RST}  ${BOLD}Accès SSH${RST} — Tunnel mTLS vers le serveur SSH backend" \
-    "       Ressource : ${APP_IP}:22" \
-    "       Politique : allow-admins-ssh (groupe ztna-admins)" \
+    "  ${BOLD}${GREEN}  [1]${RST}  ${BOLD}Accès SSH${RST} — ztna access ssh-dev-01" \
+    "       Ressource publiée : ssh-dev-01 (ssh)  →  Backend : ${BACKEND_IP}:22" \
+    "       Politique : allow ztna-admins sur ssh:*" \
     "" \
-    "  ${BOLD}${BLUE}  [2]${RST}  ${BOLD}Accès HTTP${RST} — Tunnel mTLS vers l'application web" \
-    "       Ressource : ${APP_IP}:8080" \
-    "       Politique : allow-admins-http (groupe ztna-admins)" \
+    "  ${BOLD}${BLUE}  [2]${RST}  ${BOLD}Accès Web${RST} — ztna access grafana-internal" \
+    "       Ressource publiée : grafana-internal (web)  →  Backend : ${BACKEND_IP}:3000" \
+    "       Politique : allow ztna-admins sur web:*" \
     "" \
-    "  ${BOLD}${YELLOW}  [3]${RST}  ${BOLD}Accès PostgreSQL${RST} — Tunnel mTLS vers la base de données" \
-    "       Ressource : ${APP_IP}:5432" \
-    "       Politique : allow-admins-db (groupe ztna-dba)" \
+    "  ${BOLD}${YELLOW}  [3]${RST}  ${BOLD}Accès PostgreSQL${RST} — ztna access pg-staging" \
+    "       Ressource publiée : pg-staging (db)  →  Backend : ${BACKEND_IP}:5432" \
+    "       Politique : allow ztna-dba sur db:*" \
     "" \
     "  ${DIM}  Appuyez sur 1, 2 ou 3 dans la fenêtre CONTROLLER${RST}"
 }
@@ -326,11 +332,12 @@ step_3() {
     "" \
     "  $(jlog INFO "génération bi-clé RSA 2048" "algorithm" "RSA" "bits" "2048")" \
     "  $(jlog INFO "création CSR" "cn" "alice" "org" "ztna-admins,ztna-dba")" \
-    "  $(jlog INFO "envoi CSR au Control Plane" "url" "https://${CP_IP}:8080/api/v1/cert/issue" "jwt" "Bearer eyJh...")" \
+    "  $(jlog INFO "envoi CSR au Control Plane" "url" "https://${CP_IP}:8080/api/v1/credentials/device-cert" "jwt" "Bearer eyJh...")" \
     "  ${DIM}  → Attente signature CA...${RST}" \
     "  $(jlog INFO "certificat device reçu" "serial" "${CERT_SERIAL}" "cn" "alice" "valid_hours" "24")" \
+    "  $(jlog INFO "CA certificate sauvegardé" "file" "client-ca.crt")" \
     "" \
-    "  ${GREEN}${BOLD}  ✓ Certificat X.509 obtenu${RST}" \
+    "  ${GREEN}${BOLD}  ✓ Certificat X.509 obtenu + CA sauvegardée${RST}" \
     "  ${DIM}    Serial : ${CERT_SERIAL}${RST}" \
     "  ${DIM}    CN=alice, O=ztna-admins,ztna-dba${RST}" \
     "  ${DIM}    Validité : 24h | Émetteur : ZTNA Device CA${RST}" &
@@ -340,7 +347,7 @@ step_3() {
   anim_pane cp 0.2 \
     "$(hdr_active "CONTROL PLANE" "$CP_IP")" \
     "" \
-    "  $(jlog INFO "requête /cert/issue reçue" "method" "POST" "remote" "${CLIENT_IP}")" \
+    "  $(jlog INFO "requête /credentials/device-cert reçue" "method" "POST" "remote" "${CLIENT_IP}")" \
     "  $(jlog INFO "validation JWT" "sub" "${JWT_SUB}" "issuer" "keycloak" "valid" "true")" \
     "  $(jlog INFO "extraction groupes depuis JWT" "groups" "[ztna-admins,ztna-dba]")" \
     "  $(jlog INFO "signature CSR par Device CA" "serial" "${CERT_SERIAL}" "cn" "alice" "org" "[ztna-admins,ztna-dba]")" \
@@ -360,13 +367,13 @@ step_3() {
     "    ┌──────┐                                            ┌────────────┐" \
     "    │      │ ─── 1. Generate RSA 2048 keypair           │            │" \
     "    │      │                                             │            │" \
-    "    │ CSR  │ ─── 2. POST /api/v1/cert/issue ──────────► │  Validate  │" \
+    "    │ CSR  │ ─── 2. POST /credentials/device-cert ────► │  Validate  │" \
     "    │      │        (CSR + JWT Bearer)                   │  JWT       │" \
     "    │      │                                             │  ✓         │" \
     "    │      │                                             │            │" \
     "    │      │                                             │  Sign CSR  │" \
     "    │      │                                             │  Device CA │" \
-    "    │      │ ◄── 3. X.509 Certificate ─────────────────  │  Serial:   │" \
+    "    │      │ ◄── 3. X.509 Cert + CA Cert ──────────────  │  Serial:   │" \
     "    │      │        CN=alice O=ztna-admins               │  ${CERT_SERIAL}│" \
     "    └──────┘                                            └────────────┘" \
     "" \
@@ -378,6 +385,59 @@ step_3() {
 
 step_4() {
   load_scenario
+  TSEC=15
+
+  anim_pane client 0.18 \
+    "$(hdr_active "CLIENT CLI" "$CLIENT_IP")" \
+    "" \
+    "  \$ ${BOLD}ztna resources${RST}" \
+    "" \
+    "  $(jlog INFO "récupération des ressources publiées" "endpoint" "https://${CP_IP}:8080/api/v1/resources")" \
+    "" \
+    "  NOM                  TYPE     ACCÈS            DESCRIPTION" \
+    "  ---                  ----     -----            -----------" \
+    "  grafana-internal     web      http-proxy       Grafana interne" \
+    "  ssh-dev-01           ssh      ssh-cert         Serveur SSH dev" \
+    "  pg-staging           db       tcp-tunnel       PostgreSQL staging" \
+    "" \
+    "  ${GREEN}${BOLD}  ✓ 3 ressources disponibles${RST}" &
+  local pid1=$!
+
+  sleep 0.5
+  anim_pane cp 0.2 \
+    "$(hdr_active "CONTROL PLANE" "$CP_IP")" \
+    "" \
+    "  $(jlog INFO "GET /api/v1/resources" "sub" "alice" "groups" "[ztna-admins,ztna-dba]")" \
+    "  $(jlog INFO "ressources filtrées par groupes" "count" "3")" &
+  local pid2=$!
+
+  set_pane gateway "$(hdr_idle "GATEWAY PEP" "$GW_IP")" "" \
+    "  ${DIM}  En attente de connexion client...${RST}"
+
+  set_pane flow \
+    "" \
+    "  ${BOLD}Découverte des Ressources Publiées${RST}" \
+    "" \
+    "    ${GREEN}CLIENT${RST}                                              ${CYAN}CONTROL PLANE${RST}" \
+    "    ┌──────┐                                            ┌────────────────┐" \
+    "    │      │ ── GET /api/v1/resources (Bearer JWT) ───► │                │" \
+    "    │      │                                            │  Filter by     │" \
+    "    │ list │                                            │  user groups   │" \
+    "    │      │ ◄── [{name, type, access_mode}] ────────── │                │" \
+    "    └──────┘                                            └────────────────┘" \
+    "" \
+    "    ${BOLD}Ressources publiées (filtrage par groupes OIDC) :${RST}" \
+    "    ┌──────────────────┬──────┬──────────────────────────────┐" \
+    "    │ grafana-internal  │ web  │ http-proxy → ${BACKEND_IP}:3000 │" \
+    "    │ ssh-dev-01        │ ssh  │ ssh-cert → ${BACKEND_IP}:22     │" \
+    "    │ pg-staging        │ db   │ tcp-tunnel → ${BACKEND_IP}:5432 │" \
+    "    └──────────────────┴──────┴──────────────────────────────┘"
+
+  wait $pid1 $pid2 2>/dev/null || true
+}
+
+step_5() {
+  load_scenario
   TSEC=20
   set_pane cp "$(hdr_idle "CONTROL PLANE" "$CP_IP")" "" \
     "  ${DIM}  PKI idle — CRL disponible à /pki/device-ca/crl${RST}"
@@ -385,7 +445,7 @@ step_4() {
   anim_pane client 0.18 \
     "$(hdr_active "CLIENT CLI" "$CLIENT_IP")" \
     "" \
-    "  \$ ${BOLD}ztna connect ${RES_HOST} ${RES_PORT}${RST}" \
+    "  \$ ${BOLD}ztna access ${RES_NAME}${RST}" \
     "" \
     "  $(jlog INFO "connexion mTLS vers la Gateway" "addr" "${GW_IP}:8443" "tls" "1.3")" \
     "  $(jlog INFO "envoi ClientHello" "cipher_suites" "[TLS_AES_256_GCM_SHA384,TLS_CHACHA20_POLY1305]" "curves" "X25519")" \
@@ -429,7 +489,7 @@ step_4() {
   wait $pid1 $pid2 2>/dev/null || true
 }
 
-step_5() {
+step_6() {
   load_scenario
   TSEC=30
   set_pane cp "$(hdr_idle "CONTROL PLANE" "$CP_IP")" "" "  ${DIM}  En attente de requête d'autorisation...${RST}"
@@ -437,9 +497,9 @@ step_5() {
   anim_pane client 0.2 \
     "$(hdr_active "CLIENT CLI" "$CLIENT_IP")" \
     "" \
-    "  $(jlog INFO "envoi requête CONNECT" "action" "connect" "type" "${RES_TYPE}" "host" "${RES_HOST}" "port" "${RES_PORT}")" \
+    "  $(jlog INFO "envoi requête CONNECT" "action" "connect" "name" "${RES_NAME}")" \
     "  ${DIM}  → Requête (length-prefixed JSON, 4 bytes big-endian + payload) :${RST}" \
-    "  ${DIM}    {\"action\":\"connect\",\"resource\":{\"type\":\"${RES_TYPE}\",\"host\":\"${RES_HOST}\",\"port\":${RES_PORT}}}${RST}" \
+    "  ${DIM}    {\"action\":\"connect\",\"resource\":{\"name\":\"${RES_NAME}\"}}${RST}" \
     "  ${DIM}  → En attente de la décision...${RST}" &
   local pid1=$!
 
@@ -447,34 +507,34 @@ step_5() {
   anim_pane gateway 0.18 \
     "$(hdr_active "GATEWAY PEP" "$GW_IP")" \
     "" \
-    "  $(jlog INFO "requête CONNECT reçue" "action" "connect" "type" "${RES_TYPE}" "host" "${RES_HOST}" "port" "${RES_PORT}")" \
-    "  $(jlog INFO "validation cible" "host" "${RES_HOST}" "port" "${RES_PORT}" "ssrf_check" "pass")" \
-    "  $(jlog INFO "cible validée — pas loopback/link-local/metadata" "resolved_ip" "${RES_HOST}")" \
-    "  $(jlog INFO "consultation decision cache" "key" "alice|connect|${RES_TYPE}|${RES_HOST}|${RES_PORT}" "hit" "false")" \
+    "  $(jlog INFO "requête CONNECT reçue" "action" "connect" "name" "${RES_NAME}")" \
+    "  $(jlog INFO "résolution ressource via CP" "name" "${RES_NAME}" "endpoint" "/api/v1/pep/resources/${RES_NAME}")" \
+    "  $(jlog INFO "ressource résolue" "name" "${RES_NAME}" "type" "${RES_TYPE}" "backend" "${RES_BACKEND}" "access_mode" "$([ "$RES_TYPE" = web ] && echo http-proxy || ([ "$RES_TYPE" = ssh ] && echo ssh-cert || echo tcp-tunnel))")" \
+    "  $(jlog INFO "consultation decision cache" "key" "alice|connect|${RES_TYPE}:${RES_HOST}:${RES_PORT}" "hit" "false")" \
     "  $(jlog INFO "cache miss — appel au Control Plane nécessaire")" &
   local pid2=$!
 
   set_pane flow \
     "" \
-    "  ${BOLD}Requête CONNECT — Protocole ZTNA${RST}" \
+    "  ${BOLD}Requête CONNECT — Résolution par Nom${RST}" \
     "" \
-    "    ${GREEN}CLIENT${RST}                               ${YELLOW}GATEWAY${RST}" \
-    "    ┌──────┐                             ┌──────────────┐" \
-    "    │      │ ── CONNECT Request ───────► │              │" \
-    "    │      │    ${DIM}4-byte length + JSON${RST}      │  1. Parse    │" \
-    "    │      │                              │  2. Validate │      ┌──────────┐" \
-    "    │ wait │    ${DIM}{${RST}                          │     target   │ ────► │ SSRF     │" \
-    "    │  ..  │    ${DIM}  action: connect${RST}         │  3. SSRF ✓   │ ◄──── │ Check ✓  │" \
-    "    │      │    ${DIM}  type: ${RES_TYPE}${RST}              │  4. Cache?   │      └──────────┘" \
-    "    │      │    ${DIM}  host: ${RES_HOST}${RST}      │     miss →   │      ┌──────────┐" \
-    "    │      │    ${DIM}  port: ${RES_PORT}${RST}             │     CP call  │ ────► │ Decision │" \
-    "    │      │    ${DIM}}${RST}                          │              │      │ Cache    │" \
-    "    └──────┘                             └──────────────┘      └──────────┘"
+    "    ${GREEN}CLIENT${RST}                               ${YELLOW}GATEWAY${RST}                       ${CYAN}CONTROL PLANE${RST}" \
+    "    ┌──────┐                             ┌──────────────┐               ┌────────────────┐" \
+    "    │      │ ── CONNECT Request ───────► │              │               │                │" \
+    "    │      │    ${DIM}4-byte length + JSON${RST}      │  1. Parse    │               │                │" \
+    "    │      │                              │  2. Resolve  │ GET /pep/     │  ResourceRepo  │" \
+    "    │ wait │    ${DIM}{${RST}                          │   name via   │ resources/     │    ┌────────┐ │" \
+    "    │  ..  │    ${DIM}  action: connect${RST}         │   CP API ────│─────────────►  │    │ ${RES_NAME} │ │" \
+    "    │      │    ${DIM}  name: ${RES_NAME}${RST}       │              │               │    │ → ${RES_BACKEND}│ │" \
+    "    │      │    ${DIM}}${RST}                          │  3. Cache?   │ ◄──── backend  │    └────────┘ │" \
+    "    │      │                              │     miss →   │               │                │" \
+    "    │      │                              │     CP call  │               │                │" \
+    "    └──────┘                             └──────────────┘               └────────────────┘"
 
   wait $pid1 $pid2 2>/dev/null || true
 }
 
-step_6() {
+step_7() {
   load_scenario
   TSEC=35
 
@@ -498,12 +558,14 @@ step_6() {
     "" \
     "  $(jlog INFO "requête authorize reçue" \
         "pep_id" "ztna-gw-01" "sub" "alice" "action" "connect" \
-        "resource" "${RES_TYPE}://${RES_HOST}:${RES_PORT}")" \
+        "resource" "${RES_TYPE}:${RES_HOST}:${RES_PORT}")" \
     "  $(jlog INFO "authentification PEP" "pep_id" "ztna-gw-01" "token" "valid" "method" "constant-time compare")" \
     "  $(jlog INFO "chargement snapshot politiques" "rules_count" "5")" \
     "  $(jlog INFO "évaluation politique ABAC" \
         "rule" "allow-admins-${RES_TYPE}" "subject_match" "group:ztna-admins" \
-        "action_match" "connect" "resource_match" "${RES_TYPE}://${RES_HOST}:*")" \
+        "action_match" "connect" "resource_match" "${RES_TYPE}:${RES_HOST}:*")" \
+    "  $(jlog INFO "vérification conditions contextuelles" "allowed_hours" "08:00-22:00" "check" "pass")" \
+    "  $(jlog INFO "vérification device trust" "required" "medium" "provided" "high" "check" "pass")" \
     "  $(jlog INFO "règle matchée" "rule_id" "1" "effect" "allow" "groups" "[ztna-admins]")" \
     "  $(jlog INFO "décision émise" \
         "decision_id" "${DECISION_ID}" "decision" "allow" "ttl" "3600" \
@@ -517,13 +579,13 @@ step_6() {
     "" \
     "  $(jlog INFO "décision CP reçue" "decision" "allow" "ttl_seconds" "3600" "decision_id" "${DECISION_ID}")" \
     "  $(jlog INFO "décision mise en cache" \
-        "key" "alice|connect|${RES_TYPE}|${RES_HOST}|${RES_PORT}" "ttl" "60s")" \
+        "key" "alice|connect|${RES_TYPE}:${RES_HOST}:${RES_PORT}" "ttl" "60s")" \
     "" \
     "  ${GREEN}${BOLD}  ✓ Accès autorisé par le Control Plane${RST}"
 
   set_pane flow \
     "" \
-    "  ${BOLD}Autorisation — Policy Decision Point (ABAC)${RST}" \
+    "  ${BOLD}Autorisation — Policy Decision Point (ABAC + Context)${RST}" \
     "" \
     "    ${YELLOW}GATEWAY (PEP)${RST}         ${DIM}PEP Auth${RST}           ${CYAN}CONTROL PLANE (PDP)${RST}" \
     "    ┌──────────┐                            ┌──────────────────────┐" \
@@ -531,20 +593,24 @@ step_6() {
     "    │  Cache   │    {sub: alice,             │     constant-time ✓  │" \
     "    │  miss    │     groups: [ztna-admins],  │                      │" \
     "    │          │     action: connect,        │  2. Load policies    │" \
-    "    │          │     resource: ${RES_TYPE}://${RES_HOST}:${RES_PORT}} │     5 rules loaded   │" \
-    "    │          │                             │                      │" \
-    "    │          │                             │  3. ABAC evaluation  │" \
-    "    │          │                             │     ${GREEN}match: rule #1${RST}    │" \
+    "    │          │     resource: ${RES_TYPE}:${RES_HOST}:${RES_PORT},│     5 rules loaded   │" \
+    "    │          │     context: {              │                      │" \
+    "    │          │       device_trust: high,   │  3. ABAC evaluation  │" \
+    "    │          │       src_ip: ${CLIENT_IP}}}│     ${GREEN}match: rule #1${RST}    │" \
     "    │          │                             │     ${GREEN}allow-admins-${RES_TYPE}${RST} │" \
+    "    │          │                             │                      │" \
+    "    │          │                             │  4. Context checks   │" \
+    "    │          │                             │     hours: 08-22 ✓   │" \
+    "    │          │                             │     trust: high ✓    │" \
     "    │          │ ◄─ {allow, ttl: 3600} ────  │                      │" \
-    "    │  Cache   │                             │  4. Decision logged  │" \
+    "    │  Cache   │                             │  5. Decision logged  │" \
     "    │  store ✓ │                             │     id: ${DECISION_ID:0:12}..│" \
     "    └──────────┘                            └──────────────────────┘"
 
   wait $pid1 $pid2 2>/dev/null || true
 }
 
-step_7() {
+step_8() {
   load_scenario
   TSEC=42
 
@@ -554,14 +620,17 @@ step_7() {
   anim_pane gateway 0.18 \
     "$(hdr_active "GATEWAY PEP" "$GW_IP")" \
     "" \
+    "  $(jlog INFO "résolution de ressource publiée" \
+        "name" "${RES_NAME}" "backend" "${RES_BACKEND}" "type" "${RES_TYPE}")" \
+    "  $(jlog INFO "validation cible résolue" "backend" "${RES_BACKEND}" "ssrf_check" "pass")" \
     "  $(jlog INFO "création session" \
         "session_id" "${SESSION_UUID}" "sub" "alice" \
-        "resource" "${RES_TYPE}://${RES_HOST}:${RES_PORT}")" \
+        "resource" "${RES_TYPE}:${RES_HOST}:${RES_PORT}" "cert_serial" "${CERT_SERIAL}")" \
     "  $(jlog INFO "TTL session appliqué" "ttl_seconds" "3600" "expires_at" "2026-03-09T16:30:42Z")" \
     "  $(jlog INFO "vérification limite par sujet" "sub" "alice" "current" "0" "max" "10")" \
     "  $(jlog INFO "session enregistrée" \
         "session_id" "${SESSION_UUID}" "decision_id" "${DECISION_ID}" \
-        "active_count" "1")" \
+        "cert_serial" "${CERT_SERIAL}" "active_count" "1")" \
     "  $(jlog INFO "envoi télémétrie session.start au CP" \
         "session_id" "${SESSION_UUID}" "endpoint" "/api/v1/pep/sessions/start")" &
   local pid1=$!
@@ -572,24 +641,26 @@ step_7() {
     "" \
     "  $(jlog INFO "session.start reçu" \
         "session_id" "${SESSION_UUID}" "pep_id" "ztna-gw-01" \
-        "sub" "alice" "resource" "${RES_TYPE}://${RES_HOST}:${RES_PORT}")" \
+        "sub" "alice" "resource" "${RES_TYPE}:${RES_HOST}:${RES_PORT}")" \
     "  $(jlog INFO "session enregistrée dans le store" "active_sessions" "1")" &
   local pid2=$!
 
   set_pane flow \
     "" \
-    "  ${BOLD}Enregistrement Session + Télémétrie${RST}" \
+    "  ${BOLD}Route Resolution + Session + Télémétrie${RST}" \
     "" \
     "    ${YELLOW}GATEWAY${RST}                                         ${CYAN}CONTROL PLANE${RST}" \
     "    ┌─────────────────────────┐                     ┌────────────────┐" \
-    "    │  Session Manager        │                     │                │" \
-    "    │  ┌───────────────────┐  │                     │  Session Store │" \
-    "    │  │ ID: ${SESSION_UUID:0:16}..│  │                     │                │" \
-    "    │  │ Sub: alice        │  │  session.start      │                │" \
-    "    │  │ Resource: ${RES_TYPE}:${RES_PORT}  │  │ ──────────────────► │  ✓ stored      │" \
-    "    │  │ TTL: 3600s        │  │                     │  active: 1     │" \
-    "    │  │ Expires: 16:30:42 │  │                     │                │" \
-    "    │  │ MaxPerSub: 10     │  │  heartbeat (30s)    │                │" \
+    "    │  1. Route Resolution    │                     │                │" \
+    "    │  ${RES_TYPE}:${RES_HOST}:${RES_PORT}          │                     │                │" \
+    "    │    → ${RES_BACKEND} (backend) │                     │  Session Store │" \
+    "    │  2. SSRF Check ✓        │                     │                │" \
+    "    │  ┌───────────────────┐  │                     │                │" \
+    "    │  │ ID: ${SESSION_UUID:0:16}..│  │  session.start      │                │" \
+    "    │  │ Sub: alice        │  │ ──────────────────► │  ✓ stored      │" \
+    "    │  │ Cert: ${CERT_SERIAL:0:11}..│  │                     │  active: 1     │" \
+    "    │  │ Backend: resolved │  │                     │                │" \
+    "    │  │ TTL: 3600s        │  │  heartbeat (30s)    │                │" \
     "    │  │ GC: every 30s     │  │ ─ ─ ─ ─ ─ ─ ─ ─ ► │  last_seen ✓   │" \
     "    │  └───────────────────┘  │                     │                │" \
     "    └─────────────────────────┘                     └────────────────┘"
@@ -597,7 +668,7 @@ step_7() {
   wait $pid1 $pid2 2>/dev/null || true
 }
 
-step_8() {
+step_9() {
   load_scenario
   TSEC=48
 
@@ -651,9 +722,9 @@ step_8() {
     "$(hdr_active "GATEWAY PEP" "$GW_IP")" \
     "" \
     "  $(jlog INFO "réponse ALLOW envoyée au client" "session_id" "${SESSION_UUID}")" \
-    "  $(jlog INFO "ouverture connexion vers la cible" "target" "${RES_HOST}:${RES_PORT}")" \
-    "  $(jlog INFO "connexion cible établie" "target" "${RES_HOST}:${RES_PORT}" "local_addr" "10.10.30.20:52491")" \
-    "  $(jlog INFO "proxy TCP bidirectionnel actif" "client" "${CLIENT_IP}:49832" "target" "${RES_HOST}:${RES_PORT}")" \
+    "  $(jlog INFO "ouverture connexion vers backend résolu" "backend" "${RES_BACKEND}" "logical" "${RES_TYPE}:${RES_HOST}:${RES_PORT}")" \
+    "  $(jlog INFO "connexion backend établie" "target" "${RES_BACKEND}" "local_addr" "10.10.30.20:52491")" \
+    "  $(jlog INFO "proxy TCP bidirectionnel actif" "client" "${CLIENT_IP}:49832" "backend" "${RES_BACKEND}")" \
     "  $(jlog INFO "relay en cours" "bytes_in" "1482" "bytes_out" "3891" "duration" "2.1s")" \
     "  $(jlog INFO "relay en cours" "bytes_in" "2947" "bytes_out" "8234" "duration" "4.8s")" &
   local pidg=$!
@@ -665,24 +736,24 @@ step_8() {
 
   set_pane flow \
     "" \
-    "  ${BOLD}Proxy TCP Bidirectionnel — Accès à la ressource${RST}" \
+    "  ${BOLD}Proxy TCP Bidirectionnel — Route Resolution → Backend${RST}" \
     "" \
-    "    ${GREEN}CLIENT${RST}             ${DIM}mTLS tunnel${RST}        ${YELLOW}GATEWAY${RST}            ${DIM}TCP relay${RST}       ${MAGENTA}RESOURCE${RST}" \
+    "    ${GREEN}CLIENT${RST}             ${DIM}mTLS tunnel${RST}        ${YELLOW}GATEWAY${RST}            ${DIM}TCP relay${RST}       ${MAGENTA}BACKEND${RST}" \
     "    ┌──────┐                            ┌──────────┐                      ┌────────┐" \
     "    │      │ ═══════════════════════════►│          │═════════════════════►│        │" \
-    "    │ ${RES_PROTO}  │     encrypted traffic      │  PROXY   │    cleartext relay     │ ${RES_TYPE}:${RES_PORT} │" \
+    "    │ ${RES_PROTO}  │     encrypted traffic      │  PROXY   │    cleartext relay     │ ${RES_BACKEND} │" \
     "    │      │◄═══════════════════════════ │  io.Copy │◄═════════════════════│        │" \
     "    └──────┘                            └──────────┘                      └────────┘" \
-    "    ${CLIENT_IP}                            ${GW_IP}                          ${APP_IP}" \
+    "    ${CLIENT_IP}                            ${GW_IP}                          ${BACKEND_IP}" \
     "" \
+    "    ${YELLOW}Route Resolution :${RST} ${RES_TYPE}:${RES_HOST}:${RES_PORT}  →  ${RES_BACKEND} (backend réel)" \
     "    ${DIM}Bytes client→cible : 2947        Bytes cible→client : 8234${RST}" \
-    "    ${DIM}Half-close : supporté            Protocole : ${RES_TYPE}/${RES_PORT}${RST}" \
-    "    ${DIM}Session TTL : 3600s (expire à 16:30:42)    GC : actif (30s)${RST}"
+    "    ${DIM}Session TTL : 3600s              Cert serial tracké pour révocation${RST}"
 
   wait $pidc $pidg 2>/dev/null || true
 }
 
-step_9() {
+step_10() {
   load_scenario
   TSEC=55
 
@@ -743,58 +814,60 @@ step_9() {
   wait $pidc $pidg $pidcp 2>/dev/null || true
 }
 
-step_10() {
+step_11() {
   load_scenario
   set_pane client \
     "$(hdr_done "CLIENT CLI" "$CLIENT_IP")" \
     "" \
     "  ${GREEN}  ✓ Authentification OIDC${RST}" \
-    "  ${GREEN}  ✓ Certificat X.509 device${RST}" \
+    "  ${GREEN}  ✓ Certificat X.509 device + CA${RST}" \
+    "  ${GREEN}  ✓ Découverte ressources publiées (ztna resources)${RST}" \
     "  ${GREEN}  ✓ Tunnel mTLS TLS 1.3${RST}" \
-    "  ${GREEN}  ✓ Accès ${RES_TYPE}://${RES_HOST}:${RES_PORT}${RST}" \
+    "  ${GREEN}  ✓ Accès ${RES_NAME} (${RES_TYPE}) → ${RES_BACKEND}${RST}" \
     "  ${GREEN}  ✓ Session terminée proprement${RST}"
 
   set_pane gateway \
     "$(hdr_done "GATEWAY PEP" "$GW_IP")" \
     "" \
-    "  ${GREEN}  ✓ CRL vérification OK${RST}" \
-    "  ${GREEN}  ✓ Protection SSRF active${RST}" \
-    "  ${GREEN}  ✓ Autorisation via CP${RST}" \
-    "  ${GREEN}  ✓ Decision cache populate${RST}" \
-    "  ${GREEN}  ✓ Session TTL enforced${RST}" \
+    "  ${GREEN}  ✓ CRL vérification + révocation active${RST}" \
+    "  ${GREEN}  ✓ Résolution ressource via CP (name → backend)${RST}" \
+    "  ${GREEN}  ✓ Protection SSRF sur backend résolu${RST}" \
+    "  ${GREEN}  ✓ Autorisation via CP + cache${RST}" \
+    "  ${GREEN}  ✓ Session TTL + cert_serial tracké${RST}" \
     "  ${GREEN}  ✓ Proxy TCP bidirectionnel${RST}" \
-    "  ${GREEN}  ✓ Télémétrie start/end${RST}" \
-    "  ${GREEN}  ✓ Métriques de session${RST}"
+    "  ${GREEN}  ✓ Télémétrie start/end + end_reason${RST}" \
+    "  ${GREEN}  ✓ Métriques bytes_in/bytes_out${RST}"
 
   set_pane cp \
     "$(hdr_done "CONTROL PLANE" "$CP_IP")" \
     "" \
     "  ${GREEN}  ✓ OIDC/Keycloak validation${RST}" \
-    "  ${GREEN}  ✓ PKI — Device CA signing${RST}" \
+    "  ${GREEN}  ✓ PKI — Device CA + CA cert${RST}" \
     "  ${GREEN}  ✓ PEP authentication${RST}" \
-    "  ${GREEN}  ✓ Policy Engine ABAC${RST}" \
-    "  ${GREEN}  ✓ Session monitoring${RST}" \
+    "  ${GREEN}  ✓ Ressources publiées (web/ssh/db)${RST}" \
+    "  ${GREEN}  ✓ Policy Engine ABAC + Context${RST}" \
+    "  ${GREEN}  ✓ Session monitoring + audit${RST}" \
     "  ${GREEN}  ✓ Heartbeat tracking${RST}" \
-    "  ${GREEN}  ✓ CRL management${RST}"
+    "  ${GREEN}  ✓ CRL management + push revoke${RST}"
 
   set_pane flow \
     "" \
     "  ${BOLD}${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RST}" \
-    "  ${BOLD}${CYAN}║                   RÉSUMÉ — Fonctionnalités de Sécurité                     ║${RST}" \
+    "  ${BOLD}${CYAN}║                RÉSUMÉ — Plateforme de Ressources Publiées                  ║${RST}" \
     "  ${BOLD}${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} mTLS TLS 1.3        ${GREEN}✓${RST} CRL Auto-Refresh       ${GREEN}✓${RST} Protection SSRF         ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Policy Engine ABAC   ${GREEN}✓${RST} Decision Cache + TTL   ${GREEN}✓${RST} CP-Down Resilience      ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Session TTL/GC       ${GREEN}✓${RST} Per-Subject Limits     ${GREEN}✓${RST} Admin Session Kill      ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Heartbeat Gateway    ${GREEN}✓${RST} Télémétrie Sessions    ${GREEN}✓${RST} MaxBytesReader          ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Error Sanitization   ${GREEN}✓${RST} Graceful Shutdown       ${GREEN}✓${RST} Architecture Hexagonale ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Ressources publiées  ${GREEN}✓${RST} CRL Auto-Refresh       ${GREEN}✓${RST} Protection SSRF         ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Policy ABAC+Context ${GREEN}✓${RST} Decision Cache + TTL   ${GREEN}✓${RST} CP-Down Resilience      ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Name → Backend (CP) ${GREEN}✓${RST} Active Revocation      ${GREEN}✓${RST} Admin Session Kill      ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Session TTL/GC      ${GREEN}✓${RST} Télémétrie + EndReason ${GREEN}✓${RST} MaxBytesReader          ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Device Cert + CA    ${GREEN}✓${RST} Graceful Shutdown       ${GREEN}✓${RST} Architecture Hexagonale ${CYAN}║${RST}" \
     "  ${BOLD}${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${BOLD}Tests :${RST} 104 PASS | 0 FAIL | 18 packages                                ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${BOLD}Code  :${RST} 133 fichiers Go | 15720 lignes | 40 fichiers test              ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${BOLD}Niveau:${RST} Tier 1 complet | Tier 2 ~70% (comparable OpenZiti/Cloudflare)  ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${BOLD}Resource:${RST} ${RES_NAME} (${RES_TYPE}) → ${RES_BACKEND} (résolution centralisée CP)     ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${BOLD}Policy:${RST} ABAC + AllowedHours + DeviceTrust (context-aware)              ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${BOLD}Revoke:${RST} CRL diff → KillBySerial → sessions actives terminées           ${CYAN}║${RST}" \
     "  ${BOLD}${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RST}" \
     "" \
-    "  ${DIM}  Scénario testé : ${RES_DESC} (${RES_TYPE}://${RES_HOST}:${RES_PORT})${RST}" \
-    "  ${DIM}  Flux complet : OIDC → Cert → mTLS → CRL → CONNECT → AuthZ → Session → Proxy → End${RST}"
+    "  ${DIM}  Scénario testé : ${RES_DESC} (${RES_NAME} → ${RES_BACKEND})${RST}" \
+    "  ${DIM}  Flux : OIDC → DeviceCert → Resources → mTLS → CRL → CONNECT → Resolve → AuthZ → Session → Proxy → End${RST}"
 }
 
 # ============================================================================
@@ -808,7 +881,7 @@ run_controller() {
   set -m  # Enable job control for process group kills
 
   local step=0
-  local max_step=10
+  local max_step=11
   local anim_pid=0
 
   kill_step() {
@@ -824,6 +897,7 @@ run_controller() {
     "Sélection du Scénario"
     "Authentification OIDC"
     "Émission de Certificat"
+    "Découverte des Ressources"
     "Tunnel mTLS + CRL"
     "Requête CONNECT"
     "Autorisation ABAC"
@@ -861,9 +935,9 @@ run_controller() {
         "" \
         "  Choisissez le type d'accès à démontrer :" \
         "" \
-        "  ${BOLD}${GREEN}  [1]${RST}  Accès SSH       (${APP_IP}:22)" \
-        "  ${BOLD}${BLUE}  [2]${RST}  Accès HTTP      (${APP_IP}:8080)" \
-        "  ${BOLD}${YELLOW}  [3]${RST}  Accès PostgreSQL (${APP_IP}:5432)" \
+        "  ${BOLD}${GREEN}  [1]${RST}  Accès SSH       (ssh-dev-01 → ${BACKEND_IP}:22)" \
+        "  ${BOLD}${BLUE}  [2]${RST}  Accès Web       (grafana-internal → ${BACKEND_IP}:3000)" \
+        "  ${BOLD}${YELLOW}  [3]${RST}  Accès PostgreSQL (pg-staging → ${BACKEND_IP}:5432)" \
         "" \
         "  ${DIM}  Appuyez sur 1, 2 ou 3${RST}"
     elif [[ $step -eq $max_step ]]; then
@@ -893,14 +967,17 @@ run_controller() {
       while true; do
         read -rsn1 key
         case "$key" in
-          1) SCENARIO=1; RES_TYPE="ssh"; RES_PORT=22; RES_HOST="${APP_IP}"
-             RES_DESC="Serveur SSH Backend"; RES_PROTO="SSH"
+          1) SCENARIO=1; RES_TYPE="ssh"; RES_PORT=22; RES_HOST="lan-app"
+             RES_BACKEND="${BACKEND_IP}:22"
+             RES_DESC="Serveur SSH Backend"; RES_PROTO="SSH"; RES_NAME="ssh-dev-01"
              save_scenario; kill_step; step=2; break ;;
-          2) SCENARIO=2; RES_TYPE="http"; RES_PORT=8080; RES_HOST="${APP_IP}"
-             RES_DESC="Application Web HTTP"; RES_PROTO="HTTP"
+          2) SCENARIO=2; RES_TYPE="web"; RES_PORT=3000; RES_HOST="lan-app"
+             RES_BACKEND="${BACKEND_IP}:3000"
+             RES_DESC="Grafana Interne (Web)"; RES_PROTO="HTTP"; RES_NAME="grafana-internal"
              save_scenario; kill_step; step=2; break ;;
-          3) SCENARIO=3; RES_TYPE="tcp"; RES_PORT=5432; RES_HOST="${APP_IP}"
-             RES_DESC="Base de données PostgreSQL"; RES_PROTO="PSQL"
+          3) SCENARIO=3; RES_TYPE="db"; RES_PORT=5432; RES_HOST="lan-app"
+             RES_BACKEND="${BACKEND_IP}:5432"
+             RES_DESC="Base de données PostgreSQL"; RES_PROTO="PSQL"; RES_NAME="pg-staging"
              save_scenario; kill_step; step=2; break ;;
           b|B) kill_step; step=0; break ;;
           q|Q) kill_step; cleanup_all; exit 0 ;;

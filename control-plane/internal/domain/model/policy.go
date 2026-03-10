@@ -16,6 +16,10 @@ type PolicyRule struct {
 	ResourceType  string `json:"resource_type" yaml:"resource_type"`
 	ResourceMatch string `json:"resource_match" yaml:"resource_match"`
 	CreatedAt     string `json:"created_at" yaml:"created_at"`
+
+	// Conditions contextuelles optionnelles (politique context-aware)
+	AllowedHours       string `json:"allowed_hours,omitempty" yaml:"allowed_hours,omitempty"`             // ex: "08:00-18:00" (vide = pas de restriction)
+	RequiredDeviceTrust string `json:"required_device_trust,omitempty" yaml:"required_device_trust,omitempty"` // ex: "high" — contexte.device_trust doit être >= (vide = pas de restriction)
 }
 
 type PolicySnapshot struct {

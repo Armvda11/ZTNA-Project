@@ -71,6 +71,25 @@ func main() {
 			log.Error("connexion échouée", "error", err)
 			os.Exit(1)
 		}
+	case "resources":
+		if err := application.RunResources(ctx); err != nil {
+			log.Error("listage des ressources échoué", "error", err)
+			os.Exit(1)
+		}
+	case "access":
+		if len(args) < 2 {
+			fmt.Fprintf(os.Stderr, "usage: ztna access <resource> [local_addr]\n")
+			os.Exit(1)
+		}
+		resource := args[1]
+		localAddr := "127.0.0.1:0"
+		if len(args) >= 3 {
+			localAddr = args[2]
+		}
+		if err := application.RunAccess(ctx, resource, localAddr); err != nil {
+			log.Error("accès échoué", "error", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "sous-commande inconnue: %s\n", subcmd)
 		printUsage()
@@ -82,9 +101,11 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage: ztna [options] <command> [args]
 
 Commands:
-  login              Authentification OIDC (Keycloak)
-  cert               Demander un certificat mTLS client au Control Plane
-  connect <resource> Établir un tunnel mTLS vers la Gateway pour une ressource
+  login                       Authentification OIDC (Keycloak)
+  cert                        Demander un certificat mTLS client au Control Plane
+  connect <resource>          Établir un tunnel mTLS vers la Gateway (legacy)
+  resources                   Lister les ressources publiées accessibles
+  access <resource> [addr]    Accéder à une ressource via port forward local
 
 Options:
   -config string     Chemin vers le fichier de configuration (défaut: config.yaml)

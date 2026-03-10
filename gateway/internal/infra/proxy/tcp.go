@@ -33,11 +33,19 @@ func NewTCPProxy(cfg *config.Config, log *slog.Logger) *TCPProxy {
 	return &TCPProxy{cfg: cfg, log: log}
 }
 
+// ProxyResult contient les statistiques et la raison de fin d'une session proxy.
+type ProxyResult struct {
+	BytesIn   int64  // Bytes client → cible
+	BytesOut  int64  // Bytes cible → client
+	EndReason string // Raison de fin : normal, ttl_expired, admin_kill, client_close, target_close, network_error
+	Err       error  // Erreur éventuelle
+}
+
 // Proxy établit la connexion vers la ressource cible et relaie le
 // trafic bidirectionnel avec la connexion client.
-func (p *TCPProxy) Proxy(ctx context.Context, clientConn net.Conn, targetHost string, targetPort int) error {
+func (p *TCPProxy) Proxy(ctx context.Context, clientConn net.Conn, targetHost string, targetPort int) ProxyResult {
 	if err := validateTarget(targetHost, targetPort); err != nil {
-		return fmt.Errorf("cible invalide: %w", err)
+		return ProxyResult{EndReason: "invalid_target", Err: fmt.Errorf("cible invalide: %w", err)}
 	}
 
 	target := fmt.Sprintf("%s:%d", targetHost, targetPort)
@@ -48,7 +56,7 @@ func (p *TCPProxy) Proxy(ctx context.Context, clientConn net.Conn, targetHost st
 	dialer := &net.Dialer{Timeout: dialTimeout}
 	targetConn, err := dialer.DialContext(ctx, "tcp", target)
 	if err != nil {
-		return fmt.Errorf("impossible de joindre %s: %w", target, err)
+		return ProxyResult{EndReason: "target_unreachable", Err: fmt.Errorf("impossible de joindre %s: %w", target, err)}
 	}
 	defer targetConn.Close()
 
@@ -60,8 +68,14 @@ func (p *TCPProxy) Proxy(ctx context.Context, clientConn net.Conn, targetHost st
 	startTime := time.Now()
 	var bytesClientToTarget, bytesTargetToClient atomic.Int64
 
+	// Canal pour savoir quel côté s'est terminé en premier
+	type copyResult struct {
+		direction string // "client_to_target" ou "target_to_client"
+		err       error
+	}
+	resultCh := make(chan copyResult, 2)
+
 	var wg sync.WaitGroup
-	errCh := make(chan error, 2)
 
 	// client → cible
 	wg.Add(1)
@@ -69,11 +83,10 @@ func (p *TCPProxy) Proxy(ctx context.Context, clientConn net.Conn, targetHost st
 		defer wg.Done()
 		n, err := io.Copy(targetConn, clientConn)
 		bytesClientToTarget.Store(n)
-		// Half-close: signaler à la cible qu'on n'écrira plus
 		if tc, ok := targetConn.(*net.TCPConn); ok {
 			tc.CloseWrite()
 		}
-		errCh <- err
+		resultCh <- copyResult{direction: "client_to_target", err: err}
 	}()
 
 	// cible → client
@@ -82,15 +95,14 @@ func (p *TCPProxy) Proxy(ctx context.Context, clientConn net.Conn, targetHost st
 		defer wg.Done()
 		n, err := io.Copy(clientConn, targetConn)
 		bytesTargetToClient.Store(n)
-		// Half-close: signaler au client qu'on n'écrira plus
 		if tc, ok := clientConn.(*net.TCPConn); ok {
 			tc.CloseWrite()
 		}
-		errCh <- err
+		resultCh <- copyResult{direction: "target_to_client", err: err}
 	}()
 
 	// Attendre qu'un des deux côtés se termine
-	firstErr := <-errCh
+	first := <-resultCh
 
 	// Forcer la fermeture pour débloquer l'autre goroutine
 	clientConn.Close()
@@ -99,14 +111,42 @@ func (p *TCPProxy) Proxy(ctx context.Context, clientConn net.Conn, targetHost st
 	wg.Wait()
 	duration := time.Since(startTime)
 
+	bIn := bytesClientToTarget.Load()
+	bOut := bytesTargetToClient.Load()
+
+	// Déterminer la raison de fin précise
+	endReason := "normal"
+	var finalErr error
+	if ctx.Err() != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			endReason = "ttl_expired"
+		} else {
+			endReason = "admin_kill"
+		}
+		finalErr = ctx.Err()
+	} else if first.err != nil {
+		finalErr = first.err
+		if first.direction == "client_to_target" {
+			endReason = "client_close"
+		} else {
+			endReason = "target_close"
+		}
+	}
+
 	p.log.Info("session proxy terminée",
 		"target", target,
 		"duration", duration.Round(time.Millisecond).String(),
-		"bytes_client_to_target", bytesClientToTarget.Load(),
-		"bytes_target_to_client", bytesTargetToClient.Load(),
+		"bytes_client_to_target", bIn,
+		"bytes_target_to_client", bOut,
+		"end_reason", endReason,
 	)
 
-	return firstErr
+	return ProxyResult{
+		BytesIn:   bIn,
+		BytesOut:  bOut,
+		EndReason: endReason,
+		Err:       finalErr,
+	}
 }
 
 // validateTarget vérifie que l'adresse cible est une adresse réseau

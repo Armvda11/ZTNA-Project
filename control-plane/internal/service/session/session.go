@@ -36,6 +36,7 @@ type StartRequest struct {
 	SubjectUsername string `json:"subject_username"`
 	DeviceSerial    string `json:"device_serial"`
 	ResourceType    string `json:"resource_type"`
+	ResourceName    string `json:"resource_name"`
 	ResourceMatch   string `json:"resource_match"`
 }
 
@@ -63,6 +64,7 @@ func (svc *Service) Start(ctx context.Context, req StartRequest) error {
 		SubjectUsername: req.SubjectUsername,
 		DeviceSerial:    req.DeviceSerial,
 		ResourceType:    req.ResourceType,
+		ResourceName:    req.ResourceName,
 		ResourceMatch:   req.ResourceMatch,
 		StartTime:       time.Now().UTC().Format(time.RFC3339),
 	}

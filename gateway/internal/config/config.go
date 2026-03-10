@@ -216,6 +216,44 @@ func (c *Config) RequireRegistrationEnabled() bool {
 	return *c.RequireRegistration
 }
 
+// ResolveRoute cherche dans la table de routes la cible backend
+// correspondant à une ressource logique. Retourne (target, true) si
+// une route correspond, ou ("", false) sinon.
+// Le matching supporte le wildcard "*" en suffix sur ResourceMatch.
+func (c *Config) ResolveRoute(resourceType, canonical string) (string, bool) {
+	for _, r := range c.Routes {
+		if !matchField(r.ResourceType, resourceType) {
+			continue
+		}
+		if matchRoutePattern(r.ResourceMatch, canonical) {
+			return r.Target, true
+		}
+	}
+	return "", false
+}
+
+// matchField compare deux chaînes case-insensitive, avec wildcard "*".
+func matchField(pattern, value string) bool {
+	if pattern == "*" || pattern == "" {
+		return true
+	}
+	return len(pattern) == len(value) &&
+		fmt.Sprintf("%s", pattern) == fmt.Sprintf("%s", value)
+}
+
+// matchRoutePattern supporte le matching exact ou le prefix wildcard.
+// Ex: "ssh:lan-app:*" matche "ssh:lan-app:22".
+func matchRoutePattern(pattern, value string) bool {
+	if pattern == "*" {
+		return true
+	}
+	if len(pattern) > 0 && pattern[len(pattern)-1] == '*' {
+		prefix := pattern[:len(pattern)-1]
+		return len(value) >= len(prefix) && value[:len(prefix)] == prefix
+	}
+	return pattern == value
+}
+
 // StrictRevocationEnabled retourne true par défaut.
 func (c *Config) StrictRevocationEnabled() bool {
 	if c.StrictRevocation == nil {

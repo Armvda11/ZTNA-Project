@@ -16,6 +16,7 @@ import (
 const (
 	clientCertFileName = "client.crt"
 	clientKeyFileName  = "client.key"
+	clientCAFileName   = "client-ca.crt"
 )
 
 // CertFileStore stocke les certificats/clé privée mTLS dans storage.path.
@@ -49,6 +50,22 @@ func (s *CertFileStore) SaveCertAndKey(certPEM, keyPEM []byte) error {
 	}
 
 	s.log.Debug("certificat et clé privée sauvegardés", "cert", certPath, "key", keyPath)
+	return nil
+}
+
+// SaveCACert sauvegarde le certificat de la CA émettrice.
+func (s *CertFileStore) SaveCACert(caCertPEM []byte) error {
+	if len(caCertPEM) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(s.cfg.Storage.Path, 0700); err != nil {
+		return fmt.Errorf("impossible de créer le dossier de stockage: %w", err)
+	}
+	caPath := filepath.Join(s.cfg.Storage.Path, clientCAFileName)
+	if err := os.WriteFile(caPath, caCertPEM, 0644); err != nil {
+		return fmt.Errorf("impossible d'écrire le certificat CA: %w", err)
+	}
+	s.log.Debug("certificat CA sauvegardé", "path", caPath)
 	return nil
 }
 

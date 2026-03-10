@@ -19,6 +19,7 @@ import (
 	"ztna-gateway/internal/infra/mtls"
 	protocol "ztna-gateway/internal/usecase/connect"
 	"ztna-gateway/internal/infra/proxy"
+	resourceclient "ztna-gateway/internal/infra/resource"
 	"ztna-gateway/internal/infra/session"
 	"ztna-gateway/internal/infra/telemetry"
 	tlsutil "ztna-gateway/internal/infra/tls"
@@ -86,9 +87,28 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 	connectHandler.SetCRLStore(crlStore)
 	connectHandler.SetDecisionCache(decisionCache, cfg.DecisionCacheTTL)
 	connectHandler.SetCPDownMode(cfg.CPDownMode)
+	connectHandler.SetConfig(cfg)
 	if telemetryClient != nil {
 		connectHandler.SetTelemetryClient(telemetryClient)
 	}
+
+	// Client de résolution de ressources publiées via le CP
+	resClient := resourceclient.NewClient(cfg, log)
+	connectHandler.SetResourceClient(resClient)
+
+	// Câbler la révocation active : quand la CRL détecte de nouveaux serials
+	// révoqués, fermer immédiatement les sessions concernées.
+	crlStore.OnRevocationUpdate(func(newlyRevoked []string) {
+		for _, serial := range newlyRevoked {
+			killed := sessionMgr.KillBySerial(serial)
+			if killed > 0 {
+				log.Warn("sessions fermées suite à révocation CRL",
+					"cert_serial", serial,
+					"sessions_killed", killed,
+				)
+			}
+		}
+	})
 
 	// Listener mTLS
 	listener, err := mtls.NewListener(cfg, connectHandler, log)

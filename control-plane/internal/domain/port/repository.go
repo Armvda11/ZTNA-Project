@@ -43,3 +43,13 @@ type GatewayRepository interface {
 	SetGatewayActive(ctx context.Context, id string, active bool) error
 	ListGateways(ctx context.Context) ([]model.Gateway, error)
 }
+
+// ResourceRepository manages published resources.
+type ResourceRepository interface {
+	CreateResource(ctx context.Context, res model.PublishedResource) error
+	UpdateResource(ctx context.Context, res model.PublishedResource) error
+	GetResourceByName(ctx context.Context, name string) (model.PublishedResource, error)
+	ListResources(ctx context.Context) ([]model.PublishedResource, error)
+	ListResourcesForGroups(ctx context.Context, groups []string) ([]model.PublishedResource, error)
+	DeleteResource(ctx context.Context, name string) error
+}

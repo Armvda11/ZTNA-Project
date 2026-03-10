@@ -47,9 +47,9 @@ func (s *Store) CreatePolicyVersion(ctx context.Context, createdBy string, rules
 	}
 
 	for _, rule := range rules {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO policy_rules(version_id, effect, subject_match, action, resource_type, resource_match, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			versionID, rule.Effect, rule.SubjectMatch, rule.Action, rule.ResourceType, rule.ResourceMatch, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO policy_rules(version_id, effect, subject_match, action, resource_type, resource_match, allowed_hours, required_device_trust, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			versionID, rule.Effect, rule.SubjectMatch, rule.Action, rule.ResourceType, rule.ResourceMatch, rule.AllowedHours, rule.RequiredDeviceTrust, time.Now().UTC().Format(time.RFC3339)); err != nil {
 			_ = tx.Rollback()
 			return 0, fmt.Errorf("insert policy rule: %w", err)
 		}
@@ -105,7 +105,7 @@ func (s *Store) GetActivePolicy(ctx context.Context) (model.PolicySnapshot, erro
 		return snapshot, fmt.Errorf("scan active policy: %w", err)
 	}
 
-	rows, err := s.db.QueryContext(ctx, `SELECT id, version_id, effect, subject_match, action, resource_type, resource_match, created_at
+	rows, err := s.db.QueryContext(ctx, `SELECT id, version_id, effect, subject_match, action, resource_type, resource_match, allowed_hours, required_device_trust, created_at
         FROM policy_rules WHERE version_id = ? ORDER BY id ASC`, snapshot.Version.ID)
 	if err != nil {
 		return snapshot, fmt.Errorf("list policy rules: %w", err)
@@ -114,7 +114,7 @@ func (s *Store) GetActivePolicy(ctx context.Context) (model.PolicySnapshot, erro
 
 	for rows.Next() {
 		var rule model.PolicyRule
-		if err := rows.Scan(&rule.ID, &rule.VersionID, &rule.Effect, &rule.SubjectMatch, &rule.Action, &rule.ResourceType, &rule.ResourceMatch, &rule.CreatedAt); err != nil {
+		if err := rows.Scan(&rule.ID, &rule.VersionID, &rule.Effect, &rule.SubjectMatch, &rule.Action, &rule.ResourceType, &rule.ResourceMatch, &rule.AllowedHours, &rule.RequiredDeviceTrust, &rule.CreatedAt); err != nil {
 			return snapshot, fmt.Errorf("scan policy rule: %w", err)
 		}
 		snapshot.Rules = append(snapshot.Rules, rule)

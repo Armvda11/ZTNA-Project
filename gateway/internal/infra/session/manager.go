@@ -34,6 +34,9 @@ type Session struct {
 	// ResourceType est le type de ressource accédée
 	ResourceType string
 
+	// ResourceName est le nom de la ressource publiée (si résolu via CP)
+	ResourceName string
+
 	// ResourceHost est l'adresse de la ressource cible
 	ResourceHost string
 
@@ -66,6 +69,9 @@ type Session struct {
 
 	// EndReason raison de fin de session
 	EndReason string
+
+	// CertSerial est le numéro de série du certificat client (hex)
+	CertSerial string
 }
 
 // Manager gère les sessions actives sur la Gateway.
@@ -202,10 +208,33 @@ func (m *Manager) KillSession(sessionID string) error {
 // KillBySerial force la fermeture de toutes les sessions liées à un serial de certificat.
 // Retourne le nombre de sessions tuées.
 func (m *Manager) KillBySerial(serial string) int {
-	// Note: nécessiterait de stocker le serial dans Session.
-	// Pour l'instant, stub qui ne fait rien.
-	_ = serial
-	return 0
+	if serial == "" {
+		return 0
+	}
+
+	m.mu.Lock()
+	var toKill []*Session
+	for id, s := range m.sessions {
+		if s.CertSerial == serial {
+			s.EndReason = "cert_revoked"
+			toKill = append(toKill, s)
+			delete(m.sessions, id)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, s := range toKill {
+		if s.CancelFunc != nil {
+			s.CancelFunc()
+		}
+		m.log.Warn("session tuée — certificat révoqué",
+			"session_id", s.ID,
+			"sub", s.Sub,
+			"cert_serial", s.CertSerial,
+		)
+	}
+
+	return len(toKill)
 }
 
 // ActiveCount retourne le nombre de sessions actives.

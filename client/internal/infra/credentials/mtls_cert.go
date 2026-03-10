@@ -55,15 +55,18 @@ func NewClient(cfg *config.Config, log *slog.Logger) *Client {
 	}
 }
 
-// certRequest est le corps JSON envoyé au CP pour demander un certificat.
-type certRequest struct {
-	CSR string `json:"csr"`
+// deviceCertRequest est le corps JSON envoyé au CP pour demander un certificat.
+type deviceCertRequest struct {
+	CSRPEM string `json:"csr_pem"`
 }
 
-// certResponse est la réponse JSON du CP contenant le certificat signé.
-type certResponse struct {
-	Certificate string `json:"certificate"`
-	ExpiresAt   string `json:"expires_at,omitempty"`
+// deviceCertResponse est la réponse JSON du CP contenant le certificat signé.
+type deviceCertResponse struct {
+	CertificatePEM string `json:"certificate_pem"`
+	CACertPEM      string `json:"ca_cert_pem,omitempty"`
+	Serial         string `json:"serial,omitempty"`
+	ExpiresAt      string `json:"expires_at,omitempty"`
+	Fingerprint    string `json:"fingerprint,omitempty"`
 }
 
 // RequestMTLSCertFromCP demande un certificat mTLS client au Control Plane.
@@ -71,8 +74,8 @@ type certResponse struct {
 // Flux :
 //  1. Générer une paire de clés ECDSA P-256 localement
 //  2. Construire un CSR (Certificate Signing Request)
-//  3. Appeler POST /api/v1/credentials/mtls-cert avec Bearer token
-//  4. Sauvegarder le certificat reçu et la clé privée
+//  3. Appeler POST /api/v1/credentials/device-cert avec Bearer token
+//  4. Sauvegarder le certificat reçu, la CA et la clé privée
 //
 // SÉCURITÉ CRITIQUE :
 //   - La clé privée ne quitte JAMAIS le client
@@ -107,13 +110,13 @@ func (c *Client) RequestMTLSCertFromCP(accessToken string) error {
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 
 	// 4. Appeler l'endpoint du Control Plane
-	reqBody := certRequest{CSR: string(csrPEM)}
+	reqBody := deviceCertRequest{CSRPEM: string(csrPEM)}
 	bodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
 		return fmt.Errorf("impossible de sérialiser la requête: %w", err)
 	}
 
-	cpURL := strings.TrimRight(c.cfg.ControlPlane.BaseURL, "/") + "/api/v1/credentials/mtls-cert"
+	cpURL := strings.TrimRight(c.cfg.ControlPlane.BaseURL, "/") + "/api/v1/credentials/device-cert"
 	httpReq, err := http.NewRequest(http.MethodPost, cpURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("impossible de construire la requête HTTP: %w", err)
@@ -135,15 +138,15 @@ func (c *Client) RequestMTLSCertFromCP(accessToken string) error {
 	}
 
 	// 5. Parser la réponse
-	var certResp certResponse
+	var certResp deviceCertResponse
 	if err := json.NewDecoder(resp.Body).Decode(&certResp); err != nil {
 		return fmt.Errorf("impossible de parser la réponse du CP: %w", err)
 	}
-	if certResp.Certificate == "" {
+	if certResp.CertificatePEM == "" {
 		return fmt.Errorf("réponse du CP invalide: certificat manquant")
 	}
 
-	certPEM := []byte(certResp.Certificate)
+	certPEM := []byte(certResp.CertificatePEM)
 
 	// 6. Valider que le certificat correspond à notre clé privée
 	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
@@ -155,7 +158,18 @@ func (c *Client) RequestMTLSCertFromCP(accessToken string) error {
 		return fmt.Errorf("impossible de sauvegarder le certificat: %w", err)
 	}
 
-	c.log.Info("certificat mTLS obtenu et sauvegardé avec succès")
+	// 8. Sauvegarder le certificat CA si présent
+	if certResp.CACertPEM != "" {
+		if err := c.certStore.SaveCACert([]byte(certResp.CACertPEM)); err != nil {
+			c.log.Warn("impossible de sauvegarder le certificat CA", "error", err)
+		}
+	}
+
+	c.log.Info("certificat mTLS obtenu et sauvegardé avec succès",
+		"serial", certResp.Serial,
+		"fingerprint", certResp.Fingerprint,
+		"expires_at", certResp.ExpiresAt,
+	)
 	return nil
 }
 

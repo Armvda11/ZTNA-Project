@@ -1,0 +1,31 @@
+resources:
+  - name: grafana-internal
+    display_name: "Grafana Monitoring"
+    type: web
+    backend: "10.10.30.15:3000"
+    gateway_id: ztna-gw-01
+    group_match:
+      - ztna-admins
+    access_mode: http-proxy
+    description: "Internal Grafana dashboard for infrastructure monitoring"
+
+  - name: ssh-dev-01
+    display_name: "Dev Server SSH"
+    type: ssh
+    backend: "10.10.30.15:22"
+    gateway_id: ztna-gw-01
+    group_match:
+      - ztna-admins
+    access_mode: ssh-cert
+    description: "Development Linux server accessible via SSH"
+
+  - name: pg-staging
+    display_name: "PostgreSQL Staging"
+    type: db
+    backend: "10.10.30.15:5432"
+    gateway_id: ztna-gw-01
+    group_match:
+      - ztna-admins
+      - ztna-dba
+    access_mode: tcp-tunnel
+    description: "Staging PostgreSQL database"

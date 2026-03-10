@@ -19,6 +19,7 @@ import (
 	"control-plane/internal/service/decision"
 	"control-plane/internal/service/gateway"
 	"control-plane/internal/service/policy"
+	"control-plane/internal/service/resource"
 	"control-plane/internal/service/session"
 	"control-plane/internal/store/sqlite"
 )
@@ -57,10 +58,16 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 	gatewaySvc := gateway.New(store)
 	decisionSvc := decision.New(policySvc, cfg.PEP.DecisionTTLSeconds)
 	sessionSvc := session.New(store)
+	resourceSvc := resource.New(store)
 	// Seed policy is idempotent and only runs on empty DB.
 	if err := policySvc.SeedIfEmpty(ctx, cfg.Policy.SeedFile); err != nil {
 		_ = store.Close()
 		return nil, err
+	}
+	// Seed resources is idempotent and only runs on empty table.
+	if err := resourceSvc.SeedIfEmpty(ctx, cfg.Resource.SeedFile); err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("seed resources: %w", err)
 	}
 
 	oidcValidator, err := middleware.NewOIDCValidator(cfg.OIDC)
@@ -88,6 +95,8 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 		AdminPolicies:       handlers.NewAdminPoliciesHandler(policySvc, auditSvc),
 		AdminAudit:          handlers.NewAdminAuditHandler(auditSvc),
 		WhoamiHandler:       handlers.NewWhoamiHandler(),
+		ResourceHandler:     handlers.NewResourceHandler(resourceSvc),
+		PEPResourceHandler:  handlers.NewPEPResourceHandler(resourceSvc),
 		OIDC:                oidcValidator,
 		PEPAuth:             pepAuth,
 		AdminAuth:           adminAuth,

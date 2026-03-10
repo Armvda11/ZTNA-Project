@@ -15,6 +15,26 @@ rules:
     action: connect
     resource_type: ssh
     resource_match: "ssh:lan-admin:22"
+  - effect: allow
+    subject_match: group:ztna-admins
+    action: connect
+    resource_type: web
+    resource_match: "web:*"
+  - effect: allow
+    subject_match: group:ztna-admins
+    action: connect
+    resource_type: ssh
+    resource_match: "ssh:*"
+  - effect: allow
+    subject_match: group:ztna-admins
+    action: connect
+    resource_type: db
+    resource_match: "db:*"
+  - effect: allow
+    subject_match: group:ztna-dba
+    action: connect
+    resource_type: db
+    resource_match: "db:*"
   - effect: deny
     subject_match: "*"
     action: "*"

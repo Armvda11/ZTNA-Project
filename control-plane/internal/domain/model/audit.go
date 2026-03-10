@@ -6,6 +6,7 @@ type AuditEvent struct {
 	Subject       string `json:"subject"`
 	Action        string `json:"action"`
 	Resource      string `json:"resource"`
+	ResourceName  string `json:"resource_name,omitempty"`
 	Decision      string `json:"decision"`
 	Reason        string `json:"reason"`
 	PepID         string `json:"pep_id"`

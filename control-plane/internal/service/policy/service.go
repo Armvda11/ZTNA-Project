@@ -64,13 +64,16 @@ func (s *Service) GetActive(ctx context.Context) (model.PolicySnapshot, error) {
 }
 
 // Evaluate delegates to the pure EvaluationEngine in the domain layer.
+// reqCtx carries contextual signals (device_trust, src_ip, etc.) for
+// context-aware policy conditions.
 func (s *Service) Evaluate(
 	snapshot model.PolicySnapshot,
 	subject model.Subject,
 	action string,
 	resource model.Resource,
+	reqCtx map[string]any,
 ) (model.DecisionEffect, string) {
-	return s.engine.Evaluate(snapshot, subject, action, resource)
+	return s.engine.Evaluate(snapshot, subject, action, resource, reqCtx)
 }
 
 // The matching helpers have been moved to internal/domain/policy/evaluation.go

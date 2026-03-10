@@ -72,6 +72,7 @@ type resourceHostPort struct {
 // Les helpers resolvedHost / resolvedPort normalisent les deux formes.
 type resourceRequest struct {
 	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
 	// Flat fields (legacy / simple format)
 	Host string `json:"host,omitempty"`
 	Port int    `json:"port,omitempty"`
@@ -163,7 +164,8 @@ func (h *PEPHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resType := strings.ToLower(req.Resource.Type)
-	if resType != string(model.ResourceSSH) && resType != string(model.ResourceHTTP) {
+	if resType != string(model.ResourceSSH) && resType != string(model.ResourceHTTP) &&
+		resType != string(model.ResourceWeb) && resType != string(model.ResourceDB) {
 		writeError(w, domainErrors.ErrInvalidInput)
 		return
 	}
@@ -183,9 +185,9 @@ func (h *PEPHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 
 	var resource model.Resource
 	switch resType {
-	case string(model.ResourceHTTP):
+	case string(model.ResourceHTTP), string(model.ResourceWeb):
 		resource = model.Resource{
-			Type: model.ResourceHTTP,
+			Type: model.ResourceType(resType),
 			HTTP: &model.HTTPResource{
 				Host: req.Resource.resolvedHost(),
 				Port: req.Resource.resolvedPort(),
@@ -193,7 +195,7 @@ func (h *PEPHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		resource = model.Resource{
-			Type: model.ResourceSSH,
+			Type: model.ResourceType(resType),
 			SSH: &model.SSHResource{
 				Host: req.Resource.resolvedHost(),
 				Port: req.Resource.resolvedPort(),
@@ -222,6 +224,7 @@ func (h *PEPHandler) Authorize(w http.ResponseWriter, r *http.Request) {
 		Subject:       formatSubjectForAudit(subject),
 		Action:        req.Action,
 		Resource:      resource.Canonical(),
+		ResourceName:  req.Resource.Name,
 		Decision:      string(decisionResp.Effect),
 		Reason:        decisionResp.Reason,
 		PepID:         pepID,

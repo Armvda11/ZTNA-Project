@@ -24,6 +24,7 @@ type Config struct {
 	DeviceCA DeviceCAConfig `yaml:"device_ca"`
 
 	Policy  PolicyConfig  `yaml:"policy"`
+	Resource ResourceConfig `yaml:"resource"`
 	Logging LoggingConfig `yaml:"logging"`
 }
 
@@ -138,6 +139,11 @@ func (c *Config) DeviceMaxTTL() time.Duration {
 // -------------------- Policy / Logging --------------------
 
 type PolicyConfig struct {
+	SeedFile string `yaml:"seed_file"`
+}
+
+// ResourceConfig holds resource catalog configuration.
+type ResourceConfig struct {
 	SeedFile string `yaml:"seed_file"`
 }
 
