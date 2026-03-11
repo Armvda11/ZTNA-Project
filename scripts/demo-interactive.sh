@@ -31,8 +31,10 @@ set -uo pipefail
 # ============================================================================
 
 SCRIPT_PATH="$(readlink -f "$0")"
+PROJECT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
 DEMO_DIR="/tmp/ztna-demo"
 PID_FILE="$DEMO_DIR/pids"
+CLIENT_ACTION_FILE="$DEMO_DIR/client-action"
 
 # IPs
 CP_IP="10.10.20.30"
@@ -170,6 +172,7 @@ EOF
 run_display() {
   local pane="$1"
   local last_epoch=""
+  local action_done=""
 
   # Set terminal window title
   printf '\033]0;ZTNA — %s\007' "$pane"
@@ -177,6 +180,19 @@ run_display() {
   while [ ! -d "$DEMO_DIR" ]; do sleep 0.2; done
 
   while true; do
+    if [[ "$pane" == "client" && -f "$CLIENT_ACTION_FILE" ]]; then
+      local action
+      action=$(cat "$CLIENT_ACTION_FILE" 2>/dev/null || true)
+      if [[ "$action" == "open-db-shell" && "$action_done" != "open-db-shell" ]]; then
+        action_done="open-db-shell"
+        rm -f "$CLIENT_ACTION_FILE"
+        python3 "${PROJECT_DIR}/scripts/demo-psql-interactive.py"
+        # After user quits psql, resume display loop
+        printf '\033[2J\033[H'
+        last_epoch=""
+      fi
+    fi
+
     local epoch
     epoch=$(cat "$DEMO_DIR/epoch-$pane" 2>/dev/null || echo "")
     if [[ "$epoch" != "$last_epoch" && -n "$epoch" ]]; then
@@ -708,19 +724,10 @@ step_9() {
       "" \
       "  ${GREEN}${BOLD}  ✓ Réponses HTTP reçues via tunnel ZTNA${RST}"
   else
-    anim_pane client 0.25 \
-      "  \$ ${BOLD}psql -h localhost -p ${LOCAL_PORT} -U alice -d appdb${RST}" \
-      "  ${DIM}  Password for user alice: ****${RST}" \
-      "  psql (15.4)" \
-      "  Type \"help\" for help." \
-      "" \
-      "  appdb=> ${BOLD}SELECT count(*) FROM users;${RST}" \
-      "   count" \
-      "  -------" \
-      "     1247" \
-      "  (1 row)" \
-      "" \
-      "  appdb=> █"
+    # DB: laisser l'utilisateur voir le header tunnel quelques instants,
+    # puis déclencher la bascule vers le simulateur psql interactif
+    sleep 2
+    echo "open-db-shell" > "$CLIENT_ACTION_FILE"
   fi &
   local pidc=$!
 
@@ -1021,6 +1028,7 @@ cleanup_all() {
       kill "$pid" 2>/dev/null
     done < "$PID_FILE"
   fi
+  rm -f "$CLIENT_ACTION_FILE" 2>/dev/null || true
   rm -rf "$DEMO_DIR"
 }
 
@@ -1171,6 +1179,7 @@ launch_windows() {
     echo "" > "$DEMO_DIR/pane-$p"
     echo "0" > "$DEMO_DIR/epoch-$p"
   done
+  rm -f "$CLIENT_ACTION_FILE" 2>/dev/null || true
 
   # Save default scenario
   save_scenario
