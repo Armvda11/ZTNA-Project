@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================================
-# ZTNA Interactive Demo — Multi-Window Orchestrated Presentation
+# ZTNA Interactive Demo — REAL Operations on Real Infrastructure
 # ============================================================================
 #
-# Ouvre 5 fenêtres séparées sur le bureau, chacune dédiée à un composant :
+# Ouvre 5 fenêtres séparées sur le bureau :
 #
 #   ┌───────────────────────┐  ┌───────────────────────┐
 #   │  🖥️  CONTROLLER       │  │  📊 FLUX / DIAGRAMME  │
@@ -11,17 +11,29 @@
 #   └───────────────────────┘  └───────────────────────┘
 #   ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
 #   │ 👤 CLIENT     │ │ 🌐 GATEWAY    │ │ 🔒 CTRL PLANE │
-#   │ 10.10.10.10   │ │ 10.10.10.20   │ │ 10.10.20.30   │
+#   │ REAL OPS      │ │ LIVE LOGS     │ │ LIVE LOGS     │
 #   └───────────────┘ └───────────────┘ └───────────────┘
+#
+# TOUT EST RÉEL :
+#   - Vrais tokens OIDC depuis Keycloak
+#   - Vrais certificats signés par le Control Plane
+#   - Vrais tunnels mTLS vers le Gateway
+#   - Vrais logs journalctl en temps réel
+#   - Vrai accès aux ressources (SSH, HTTP, PostgreSQL)
 #
 # Usage:
 #   bash scripts/demo-interactive.sh
 #
 # Modes internes (lancés automatiquement) :
-#   --display <name>    Boucle d'affichage pour une fenêtre satellite
-#   --controller        Fenêtre de contrôle interactive
+#   --display flow     Boucle d'affichage pour diagrammes (fenêtre FLUX)
+#   --controller       Fenêtre de contrôle interactive
+#   --client           Exécution des commandes réelles (fenêtre CLIENT)
+#   --live-logs <cp|gw> Logs journalctl en direct
 #
-# Fonctionne avec : konsole, gnome-terminal, xfce4-terminal, xterm
+# Prérequis :
+#   - Lab démarré (make lab-start)
+#   - CP + GW déployés (make deploy && make deploy-gw)
+#   - Pour PostgreSQL : make deploy-db
 # ============================================================================
 
 set -uo pipefail
@@ -31,15 +43,35 @@ set -uo pipefail
 # ============================================================================
 
 SCRIPT_PATH="$(readlink -f "$0")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEMO_DIR="/tmp/ztna-demo"
 PID_FILE="$DEMO_DIR/pids"
 
-# IPs
+# Network
 CP_IP="10.10.20.30"
 GW_IP="10.10.10.20"
 CLIENT_IP="10.10.10.10"
 APP_IP="10.10.30.10"
-BACKEND_IP="10.10.30.15"
+ADMIN_IP="10.10.30.11"
+
+# SSH (for VM access — NOT ZTNA, just lab management)
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10"
+SSH_CMD="ssh ${SSH_OPTS} -i ${SSH_KEY}"
+
+# OIDC / Keycloak
+KC_URL="https://${CP_IP}:8443"
+KC_REALM="ztna"
+KC_CLIENT="ztna-control-plane"
+ZTNA_USER="alice"
+ZTNA_PASS="Password123!"
+
+# Control Plane API
+CP_API="https://${CP_IP}:8080"
+
+# Gateway
+GW_PORT="4433"
 
 # Colors (ANSI)
 RST='\033[0m'
@@ -61,68 +93,41 @@ FG_BLACK='\033[30m'
 # Scenario defaults
 SCENARIO=1
 RES_TYPE="ssh"
-RES_PORT=22
-RES_HOST="lan-app"
-RES_BACKEND="${BACKEND_IP}:22"
-RES_DESC="Serveur SSH Backend"
-RES_PROTO="SSH"
 RES_NAME="ssh-dev-01"
+RES_DESC="Serveur SSH Backend"
+RES_BACKEND=""
 LOCAL_PORT=2222
-
-# Consistent IDs
-CERT_SERIAL="3A:2B:1C:0D:4E:5F:6A:7B"
-SESSION_UUID="f47ac10b-58cc-4372-a567-0e02b2c3d479"
-DECISION_ID="dec-7f3a21b9-4c5e-48d1-9f2a-e08314a82bc0"
-JWT_SUB="auth0|alice-0x29f3"
-
-# Timestamps
-TSEC=0
-ts() {
-  TSEC=$((TSEC + RANDOM % 3 + 1))
-  local m=$((30 + TSEC / 60)) s=$((TSEC % 60)) ms=$((RANDOM % 1000))
-  printf '2026-03-09T15:%02d:%02d.%03d+01:00' "$m" "$s" "$ms"
-}
 
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
 
-trigger() { echo "$RANDOM$RANDOM" > "$DEMO_DIR/epoch-$1"; }
+trigger() { echo "$RANDOM$RANDOM" > "$DEMO_DIR/epoch-flow"; }
 
-set_pane() {
-  local p="$1"; shift
-  printf '%b\n' "$@" > "$DEMO_DIR/pane-$p"
-  trigger "$p"
+set_flow() {
+  printf '%b\n' "$@" > "$DEMO_DIR/pane-flow"
+  trigger
 }
 
-anim_pane() {
-  local p="$1" delay="$2"; shift 2
-  > "$DEMO_DIR/pane-$p"
-  trigger "$p"
-  for line in "$@"; do
-    printf '%b\n' "$line" >> "$DEMO_DIR/pane-$p"
-    trigger "$p"
-    sleep "$delay"
-  done
+load_scenario() {
+  [[ -f "$DEMO_DIR/scenario.env" ]] && source "$DEMO_DIR/scenario.env"
 }
 
-hdr_active() {
-  local name="$1" ip="$2"
-  printf "${BG_GREEN}${FG_BLACK}${BOLD} ● %-18s %-16s %14s ${RST}" "$name" "$ip" "ACTIF"
+save_scenario() {
+  cat > "$DEMO_DIR/scenario.env" << EOF
+SCENARIO=$SCENARIO
+RES_TYPE=$RES_TYPE
+RES_NAME=$RES_NAME
+RES_DESC="$RES_DESC"
+RES_BACKEND="$RES_BACKEND"
+LOCAL_PORT=$LOCAL_PORT
+EOF
 }
 
-hdr_idle() {
-  local name="$1" ip="$2"
-  printf "${BG_GRAY}${WHITE} ○ %-18s %-16s %14s ${RST}" "$name" "$ip" "en attente"
-}
-
-hdr_done() {
-  local name="$1" ip="$2"
-  printf "${BG_BLUE}${WHITE}${BOLD} ✓ %-18s %-16s %14s ${RST}" "$name" "$ip" "terminé"
-}
+signal_client() { echo "$1" > "$DEMO_DIR/client-step"; }
 
 progress_bar() {
-  local step=$1 total=${2:-10}
+  local step=$1 total=${2:-8}
   local pct=$((step * 100 / total))
   local filled=$((step * 30 / total))
   local empty=$((30 - filled))
@@ -132,57 +137,916 @@ progress_bar() {
   printf '%s %d%%' "$bar" "$pct"
 }
 
-jlog() {
-  local level="$1" msg="$2"; shift 2
-  local t; t=$(ts)
-  local extra=""
-  while [ $# -gt 0 ]; do
-    extra+=",\"$1\":\"$2\""
-    shift 2
-  done
-  printf '{"time":"%s","level":"%s","msg":"%s"%s}' "$t" "$level" "$msg" "$extra"
+# ============================================================================
+# FLOW DIAGRAMS — Educational architecture diagrams (FLOW window)
+# ============================================================================
+
+flow_step_0() {
+  set_flow \
+    "" \
+    "  ${BOLD}${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RST}" \
+    "  ${BOLD}${CYAN}║              ARCHITECTURE ZTNA — ZERO TRUST NETWORK ACCESS                 ║${RST}" \
+    "  ${BOLD}${CYAN}║                     ★ Opérations 100% Réelles ★                            ║${RST}" \
+    "  ${BOLD}${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RST}" \
+    "" \
+    "  ${GREEN}  CLIENT${RST}              ${YELLOW}  GATEWAY${RST}                  ${CYAN}  CONTROL PLANE${RST}        ${MAGENTA}  RESOURCES${RST}" \
+    "  ${GREEN}  ┌──────┐${RST}            ${YELLOW}  ┌──────────┐${RST}              ${CYAN}  ┌────────────┐${RST}      ${MAGENTA}  ┌────────┐${RST}" \
+    "  ${GREEN}  │ CLI  │${RST}            ${YELLOW}  │  PEP     │${RST}              ${CYAN}  │  PDP       │${RST}      ${MAGENTA}  │ SSH    │${RST}" \
+    "  ${GREEN}  │      │${RST}   mTLS     ${YELLOW}  │  Proxy   │${RST}   authz      ${CYAN}  │  PKI       │${RST}      ${MAGENTA}  │ HTTP   │${RST}" \
+    "  ${GREEN}  │ OIDC │${RST}  ════════  ${YELLOW}  │  CRL     │${RST}  ═════════   ${CYAN}  │  Policy    │${RST}      ${MAGENTA}  │ PgSQL  │${RST}" \
+    "  ${GREEN}  │ Cert │${RST}   TLS1.3   ${YELLOW}  │  SSRF    │${RST}   PEP auth   ${CYAN}  │  OIDC      │${RST}      ${MAGENTA}  │        │${RST}" \
+    "  ${GREEN}  └──────┘${RST}            ${YELLOW}  └──────────┘${RST}              ${CYAN}  └────────────┘${RST}      ${MAGENTA}  └────────┘${RST}" \
+    "  ${DIM}  localhost${RST}            ${DIM}  ${GW_IP}${RST}                ${DIM}  ${CP_IP}${RST}        ${DIM}  ${APP_IP}${RST}" \
+    "  ${DIM}  (dev machine)${RST}        ${DIM}  (WAN/DMZ/LAN)${RST}              ${DIM}  (DMZ)${RST}              ${DIM}  (LAN isolé)${RST}" \
+    "" \
+    "  ${GREEN}✓${RST} Vrais tokens OIDC    ${GREEN}✓${RST} Vrais certificats X.509    ${GREEN}✓${RST} Vrais logs journalctl" \
+    "  ${GREEN}✓${RST} Vrai tunnel mTLS     ${GREEN}✓${RST} Vraie autorisation PEP     ${GREEN}✓${RST} Vrai accès ressources"
 }
 
-load_scenario() {
-  if [[ -f "$DEMO_DIR/scenario.env" ]]; then
-    source "$DEMO_DIR/scenario.env"
+flow_step_1() {
+  load_scenario
+
+  local pg_status="${RED}✗ non déployé (make deploy-db)${RST}"
+  if timeout 5 ${SSH_CMD} -J ztna@${GW_IP} ztna@${APP_IP} "pg_isready -q" >/dev/null 2>&1; then
+    pg_status="${GREEN}✓ opérationnel${RST}"
+  fi
+
+  set_flow \
+    "" \
+    "  ${BOLD}Scénarios de démonstration — Ressources RÉELLES${RST}" \
+    "" \
+    "  ${BOLD}${GREEN}  [1]${RST}  ${BOLD}Accès SSH${RST} — Flux 1 (certificat SSH signé par le CP)" \
+    "       OIDC → SSH Cert → Jump Host ztna-gw → lan-app:22" \
+    "       ${GREEN}✓ opérationnel${RST}" \
+    "" \
+    "  ${BOLD}${BLUE}  [2]${RST}  ${BOLD}Accès HTTP${RST} — Flux 2 (certificat Device mTLS)" \
+    "       OIDC → Device Cert → mTLS Gateway:${GW_PORT} → nginx lan-app:80" \
+    "       ${GREEN}✓ opérationnel${RST}" \
+    "" \
+    "  ${BOLD}${YELLOW}  [3]${RST}  ${BOLD}Accès PostgreSQL${RST} — Flux 2 (mTLS TCP tunnel)" \
+    "       OIDC → Device Cert → mTLS Gateway:${GW_PORT} → pg lan-app:5432" \
+    "       ${pg_status}" \
+    "" \
+    "  ${DIM}  Appuyez sur 1, 2 ou 3 dans la fenêtre CONTROLLER${RST}" \
+    "" \
+    "  ${DIM}  Infrastructure : 5 VMs KVM/libvirt, 3 zones réseau (WAN/DMZ/LAN)${RST}" \
+    "  ${DIM}  LAN isolé (mode=none) — accessible uniquement via le gateway ZTNA${RST}"
+}
+
+flow_step_2() {
+  set_flow \
+    "" \
+    "  ${BOLD}Flux OIDC — Resource Owner Password Grant (RÉEL)${RST}" \
+    "" \
+    "    ${GREEN}CLIENT${RST}                                              ${CYAN}KEYCLOAK (IdP)${RST}" \
+    "    ┌──────┐                                            ┌────────────────┐" \
+    "    │      │                                             │  Realm: ztna   │" \
+    "    │      │ ─── POST /token ─────────────────────────► │                │" \
+    "    │      │     client_id=ztna-control-plane            │  Authentifier  │" \
+    "    │      │     username=alice                          │  alice         │" \
+    "    │      │     password=****                           │                │" \
+    "    │      │     grant_type=password                     │  Vérifier...   │" \
+    "    │      │                                             │  ✓             │" \
+    "    │      │ ◄── access_token (JWT signé RS256) ──────── │                │" \
+    "    │      │     + refresh_token                         │  Claims :      │" \
+    "    └──────┘                                            │  sub, groups,  │" \
+    "                                                        │  exp, iss      │" \
+    "    ${DIM}Endpoint réel :${RST}                                    └────────────────┘" \
+    "    ${DIM}${KC_URL}/realms/${KC_REALM}/protocol/openid-connect/token${RST}" \
+    "" \
+    "    ${YELLOW}Le token JWT contient les groupes Keycloak (ztna-admins, ztna-dba)${RST}" \
+    "    ${YELLOW}utilisés ensuite pour l'autorisation ABAC par le Control Plane.${RST}"
+}
+
+flow_step_3() {
+  load_scenario
+  if [[ "$RES_TYPE" == "ssh" ]]; then
+    set_flow \
+      "" \
+      "  ${BOLD}Émission de Certificat SSH — PKI ZTNA (RÉEL)${RST}" \
+      "" \
+      "    ${GREEN}CLIENT${RST}                                          ${CYAN}CONTROL PLANE (SSH CA)${RST}" \
+      "    ┌──────┐                                        ┌──────────────────┐" \
+      "    │      │ ── 1. ssh-keygen -t ed25519             │                  │" \
+      "    │      │                                        │                  │" \
+      "    │ key  │ ── 2. POST /credentials/ssh-cert ────► │  Valider JWT     │" \
+      "    │ pub  │      {public_key, principals}           │  Extraire groups │" \
+      "    │      │      + Authorization: Bearer JWT        │  Signer cert     │" \
+      "    │      │                                        │  (SSH CA key)    │" \
+      "    │      │ ◄── 3. {certificate: ssh-ed25519-cert} │  TTL: 15min      │" \
+      "    └──────┘                                        └──────────────────┘" \
+      "" \
+      "    ${YELLOW}Le certificat SSH est signé par la CA du CP (ssh_ca).${RST}" \
+      "    ${YELLOW}Les VMs cibles (ztna-gw, lan-app) ont TrustedUserCAKeys configuré.${RST}" \
+      "    ${YELLOW}Aucune distribution de clés nécessaire — trust par CA.${RST}"
+  else
+    set_flow \
+      "" \
+      "  ${BOLD}Émission de Certificat Device X.509 — PKI ZTNA (RÉEL)${RST}" \
+      "" \
+      "    ${GREEN}CLIENT${RST}                                          ${CYAN}CONTROL PLANE (Device CA)${RST}" \
+      "    ┌──────┐                                        ┌──────────────────┐" \
+      "    │      │ ── 1. openssl ecparam P-256 genkey      │                  │" \
+      "    │      │ ── 2. openssl req -new (CSR)            │                  │" \
+      "    │      │                                        │                  │" \
+      "    │ CSR  │ ── 3. POST /credentials/device-cert ──►│  Valider JWT     │" \
+      "    │      │      {csr_pem} + Bearer JWT             │  Extraire groups │" \
+      "    │      │                                        │  Signer CSR      │" \
+      "    │      │                                        │  (Device CA key) │" \
+      "    │      │ ◄── 4. {certificate_pem: X.509 PEM} ── │  TTL: 24h        │" \
+      "    └──────┘                                        └──────────────────┘" \
+      "" \
+      "    ${YELLOW}Le certificat X.509 encode les groupes OIDC dans le champ Organization.${RST}" \
+      "    ${YELLOW}CN=alice, O=ztna-admins — utilisé pour TLS 1.3 client auth (mTLS).${RST}"
   fi
 }
 
-save_scenario() {
-  cat > "$DEMO_DIR/scenario.env" <<EOF
-SCENARIO=$SCENARIO
-RES_TYPE=$RES_TYPE
-RES_PORT=$RES_PORT
-RES_HOST=$RES_HOST
-RES_BACKEND=$RES_BACKEND
-RES_DESC="$RES_DESC"
-RES_PROTO=$RES_PROTO
-RES_NAME=$RES_NAME
-LOCAL_PORT=$LOCAL_PORT
-EOF
+flow_step_4() {
+  set_flow \
+    "" \
+    "  ${BOLD}Découverte des Ressources Publiées (RÉEL)${RST}" \
+    "" \
+    "    ${GREEN}CLIENT${RST}                                          ${CYAN}CONTROL PLANE${RST}" \
+    "    ┌──────┐                                        ┌──────────────────┐" \
+    "    │      │ ── GET /api/v1/resources ─────────────► │  Valider JWT     │" \
+    "    │      │    Authorization: Bearer JWT             │  Filtrer par     │" \
+    "    │      │                                        │  groupes user    │" \
+    "    │ list │ ◄── [{name, type, access_mode, ...}] ── │  Retourner       │" \
+    "    └──────┘                                        └──────────────────┘" \
+    "" \
+    "    ${BOLD}Endpoint réel :${RST} ${CP_API}/api/v1/resources" \
+    "" \
+    "    ${YELLOW}Les ressources publiées sont définies côté CP (resources.yaml)${RST}" \
+    "    ${YELLOW}et filtrées par les groupes de l'utilisateur authentifié.${RST}"
+}
+
+flow_step_5() {
+  load_scenario
+  if [[ "$RES_TYPE" == "ssh" ]]; then
+    set_flow \
+      "" \
+      "  ${BOLD}Connexion SSH via Jump Host ZTNA (RÉEL)${RST}" \
+      "" \
+      "    ${GREEN}CLIENT${RST}         ${DIM}SSH Cert Auth${RST}        ${YELLOW}ZTNA-GW (Jump)${RST}       ${MAGENTA}LAN-APP${RST}" \
+      "    ┌──────┐                          ┌──────────┐         ┌────────┐" \
+      "    │      │ ══ SSH + Cert ══════════► │ Verify   │         │        │" \
+      "    │ ssh  │    ed25519-cert           │ CA Trust │ SSH     │ sshd   │" \
+      "    │  -J  │    principals: [ztna]     │ ✓        │ ═════► │ ztna@  │" \
+      "    │      │                          │ Forward  │         │        │" \
+      "    │      │ ◄═══════════════════════ │ ◄═══════ │ ◄═════ │        │" \
+      "    └──────┘                          └──────────┘         └────────┘" \
+      "    ${DIM}localhost${RST}                        ${DIM}${GW_IP}${RST}            ${DIM}${APP_IP}${RST}" \
+      "" \
+      "    ${YELLOW}ssh -i id_ztna_alice -i id_ztna_alice-cert.pub -J ztna@${GW_IP} ztna@${APP_IP}${RST}" \
+      "    ${DIM}TrustedUserCAKeys sur ztna-gw ET lan-app → trust par CA ZTNA${RST}"
+  else
+    set_flow \
+      "" \
+      "  ${BOLD}Tunnel mTLS + Autorisation PEP + TCP Proxy (RÉEL)${RST}" \
+      "" \
+      "    ${GREEN}CLIENT${RST}          ${DIM}TLS 1.3 mTLS${RST}       ${YELLOW}GATEWAY (PEP)${RST}        ${CYAN}CP (PDP)${RST}" \
+      "    ┌──────┐                         ┌──────────┐        ┌────────────┐" \
+      "    │      │ ═ 1. ClientHello ══════►│ Verify   │        │            │" \
+      "    │ cert │ ═ 2. Client Cert ══════►│ Chain ✓  │        │            │" \
+      "    │ key  │                         │ CRL ✓    │        │            │" \
+      "    │      │ ═ 3. ConnectRequest ═══►│          │        │            │" \
+      "    │      │    {resource, action}    │ 4. authz │══════►│  ABAC eval │" \
+      "    │      │                         │          │◄══════│  allow/deny│" \
+      "    │      │ ◄═ 5. ConnectResponse ═ │ 5. cache │        │            │" \
+      "    │      │    {allowed, decision}   │ 6. proxy │═══► ${MAGENTA}BACKEND${RST}        │" \
+      "    └──────┘                         └──────────┘        └────────────┘" \
+      "    ${DIM}localhost${RST}                       ${DIM}${GW_IP}:${GW_PORT}${RST}        ${DIM}${CP_IP}:8443${RST}" \
+      "" \
+      "    ${YELLOW}Protocole : JSON newline-delimited sur TLS 1.3 (TLS_AES_256_GCM)${RST}" \
+      "    ${YELLOW}Après ConnectResponse(allowed), le gateway fait io.Copy bidirectionnel${RST}"
+  fi
+}
+
+flow_step_6() {
+  load_scenario
+  set_flow \
+    "" \
+    "  ${BOLD}${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RST}" \
+    "  ${BOLD}${CYAN}║          DÉMONSTRATION TERMINÉE — Opérations 100% Réelles ✓                ║${RST}" \
+    "  ${BOLD}${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Token OIDC réel depuis Keycloak (${CP_IP}:8443)                       ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Certificat réel signé par le Control Plane (${CP_IP}:8080)            ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Ressources publiées réelles du CP                                    ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Accès réel à ${RES_NAME} (${RES_TYPE}) via ZTNA                      ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Logs réels journalctl des services CP + Gateway                      ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${BOLD}Scénario :${RST} ${RES_DESC}                                              ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${BOLD}Flux :${RST} OIDC → Cert → mTLS/SSH → PEP Authorize → Proxy → Access       ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${DIM}Infrastructure : 5 VMs KVM, 3 zones réseau, LAN isolé${RST}                    ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}║${RST}  ${DIM}Aucune simulation — tout est exécuté sur l'infrastructure réelle${RST}         ${CYAN}║${RST}" \
+    "  ${BOLD}${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RST}" \
+    "" \
+    "  ${DIM}  [1] Autre scénario   [b] Retour   [q] Quitter${RST}"
 }
 
 # ============================================================================
-# DISPLAY LOOP — runs in each satellite window
+# CLIENT EXECUTION — Real commands (CLIENT window)
+# ============================================================================
+
+client_header() {
+  echo -e "\n  ${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RST}"
+  echo -e "  ${BOLD}${CYAN}  $1${RST}"
+  echo -e "  ${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RST}"
+}
+
+client_step_0() {
+  clear
+  echo -e "${BOLD}${CYAN}"
+  echo "    ╔══════════════════════════════════════════════╗"
+  echo "    ║  ZTNA — Client Terminal (Real Operations)   ║"
+  echo "    ╚══════════════════════════════════════════════╝"
+  echo -e "${RST}"
+
+  client_header "Pre-flight — Vérification de l'infrastructure"
+  echo ""
+
+  local all_ok=true
+
+  for entry in "${CLIENT_IP}:wan-client" "${GW_IP}:ztna-gw" "${CP_IP}:ztna-cp"; do
+    local ip="${entry%%:*}" name="${entry##*:}"
+    echo -ne "  [${name}] SSH ${ip} ... "
+    if timeout 5 ${SSH_CMD} ztna@"${ip}" 'echo ok' >/dev/null 2>&1; then
+      echo -e "${GREEN}✓ accessible${RST}"
+    else
+      echo -e "${RED}✗ inaccessible${RST}"
+      all_ok=false
+    fi
+  done
+
+  echo -ne "  [lan-app] SSH ${APP_IP} (via jump host) ... "
+  if timeout 8 ${SSH_CMD} -J ztna@"${GW_IP}" ztna@"${APP_IP}" 'echo ok' >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ accessible${RST}"
+  else
+    echo -e "${YELLOW}✗ inaccessible${RST}"
+  fi
+
+  echo ""
+  echo -ne "  [control-plane] ${CP_API}/healthz ... "
+  if curl -sfk --max-time 3 "${CP_API}/healthz" >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ UP${RST}"
+  else
+    echo -e "${RED}✗ DOWN${RST}"
+    all_ok=false
+  fi
+
+  echo -ne "  [keycloak] ${KC_URL}/realms/${KC_REALM} ... "
+  if curl -sfk --max-time 5 "${KC_URL}/realms/${KC_REALM}" >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ UP${RST}"
+  else
+    echo -e "${RED}✗ DOWN${RST}"
+    all_ok=false
+  fi
+
+  echo -ne "  [gateway] ztna-gateway.service ... "
+  if timeout 5 ${SSH_CMD} ztna@"${GW_IP}" "systemctl is-active ztna-gateway" >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ active${RST}"
+  else
+    echo -e "${RED}✗ inactive${RST}"
+    all_ok=false
+  fi
+
+  echo -ne "  [postgresql] lan-app:5432 ... "
+  if timeout 8 ${SSH_CMD} -J ztna@"${GW_IP}" ztna@"${APP_IP}" "pg_isready -q" >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ opérationnel${RST}"
+  else
+    echo -e "${DIM}— non déployé (optionnel : make deploy-db)${RST}"
+  fi
+
+  echo ""
+  if $all_ok; then
+    echo -e "  ${GREEN}${BOLD}✓ Infrastructure ZTNA opérationnelle — prête pour la démo${RST}"
+  else
+    echo -e "  ${RED}${BOLD}⚠ Certains composants sont inaccessibles${RST}"
+    echo -e "  ${DIM}  Vérifiez avec : make check${RST}"
+  fi
+}
+
+client_step_1() {
+  clear
+  echo -e "${BOLD}${CYAN}"
+  echo "    ╔══════════════════════════════════════════════╗"
+  echo "    ║  ZTNA — Client Terminal (Real Operations)   ║"
+  echo "    ╚══════════════════════════════════════════════╝"
+  echo -e "${RST}"
+  echo -e "  ${DIM}En attente de la sélection du scénario dans CONTROLLER...${RST}"
+}
+
+client_step_2() {
+  load_scenario
+  clear
+  client_header "Étape 2 — Authentification OIDC (RÉELLE)"
+  echo ""
+  echo -e "  ${BOLD}\$ ztna login --provider keycloak${RST}"
+  echo -e "  ${DIM}Authentification via OIDC Resource Owner Password Grant${RST}"
+  echo ""
+  echo -e "  ${DIM}→ POST ${KC_URL}/realms/${KC_REALM}/protocol/openid-connect/token${RST}"
+  echo -e "  ${DIM}  client_id=${KC_CLIENT}  username=${ZTNA_USER}  grant_type=password${RST}"
+  echo ""
+
+  local TOKEN_RESP
+  TOKEN_RESP=$(curl -sk \
+    -d "client_id=${KC_CLIENT}&username=${ZTNA_USER}&password=${ZTNA_PASS}&grant_type=password" \
+    "${KC_URL}/realms/${KC_REALM}/protocol/openid-connect/token" 2>&1)
+
+  local ACCESS_TOKEN
+  ACCESS_TOKEN=$(echo "$TOKEN_RESP" | python3 -c \
+    "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))" 2>/dev/null || true)
+
+  if [[ -z "$ACCESS_TOKEN" ]]; then
+    echo -e "  ${RED}✗ Token OIDC non obtenu${RST}"
+    echo -e "  ${DIM}Réponse Keycloak: ${TOKEN_RESP:0:300}${RST}"
+    return 1
+  fi
+
+  echo "$ACCESS_TOKEN" > "$DEMO_DIR/oidc_token"
+
+  local PAYLOAD
+  PAYLOAD=$(echo "$ACCESS_TOKEN" | cut -d. -f2 | tr '_-' '/+' | \
+    python3 -c "import sys,base64,json; raw=sys.stdin.read().strip(); \
+    padded=raw+'='*(-len(raw)%4); d=json.loads(base64.b64decode(padded)); \
+    print(json.dumps(d,indent=2))" 2>/dev/null || echo "{}")
+
+  local USERNAME GROUPS EXP_TS EXP_HR
+  USERNAME=$(echo "$PAYLOAD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('preferred_username','?'))" 2>/dev/null || echo "?")
+  GROUPS=$(echo "$PAYLOAD" | python3 -c "import sys,json; g=json.load(sys.stdin).get('groups',[]); print(', '.join(g) if g else '—')" 2>/dev/null || echo "?")
+  EXP_TS=$(echo "$PAYLOAD" | python3 -c "import sys,json; print(json.load(sys.stdin).get('exp',0))" 2>/dev/null || echo "0")
+  EXP_HR=$(python3 -c "import datetime; print(datetime.datetime.fromtimestamp(${EXP_TS}).strftime('%H:%M:%S'))" 2>/dev/null || echo "?")
+
+  echo -e "  ${GREEN}${BOLD}✓ Token OIDC obtenu${RST} (${#ACCESS_TOKEN} caractères)"
+  echo ""
+  echo -e "  ${BOLD}  Claims JWT :${RST}"
+  echo -e "    Utilisateur : ${BOLD}${USERNAME}${RST}"
+  echo -e "    Groupes     : ${BOLD}${GROUPS}${RST}"
+  echo -e "    Expire à    : ${EXP_HR}"
+  echo -e "    Token       : ${DIM}${ACCESS_TOKEN:0:60}...${RST}"
+}
+
+client_step_3() {
+  load_scenario
+  clear
+
+  local TOKEN
+  TOKEN=$(cat "$DEMO_DIR/oidc_token" 2>/dev/null || true)
+  [[ -z "$TOKEN" ]] && { echo -e "  ${RED}✗ Token OIDC manquant — exécutez l'étape 2${RST}"; return 1; }
+
+  if [[ "$RES_TYPE" == "ssh" ]]; then
+    client_step_3_ssh_cert "$TOKEN"
+  else
+    client_step_3_device_cert "$TOKEN"
+  fi
+}
+
+client_step_3_ssh_cert() {
+  local TOKEN="$1"
+  client_header "Étape 3 — Émission Certificat SSH (RÉEL)"
+  echo ""
+  echo -e "  ${BOLD}\$ ztna cert --type ssh${RST}"
+  echo -e "  ${DIM}Génération clé Ed25519 + demande de certificat SSH au CP${RST}"
+  echo ""
+
+  local KEY_FILE="$DEMO_DIR/id_ztna_alice"
+  local CERT_FILE="${KEY_FILE}-cert.pub"
+
+  echo -e "  ${DIM}→ ssh-keygen -t ed25519 -f ${KEY_FILE}${RST}"
+  rm -f "$KEY_FILE" "$KEY_FILE.pub" "$CERT_FILE"
+  ssh-keygen -t ed25519 -f "$KEY_FILE" -N "" -C "ztna-${ZTNA_USER}" -q
+  echo -e "  ${GREEN}✓${RST} Clé Ed25519 générée"
+
+  local PUB_KEY
+  PUB_KEY=$(cat "${KEY_FILE}.pub")
+
+  echo -e "  ${DIM}→ POST ${CP_API}/api/v1/credentials/ssh-cert${RST}"
+  echo -e "  ${DIM}  principals: [ztna, ${ZTNA_USER}]${RST}"
+  echo ""
+
+  local CERT_RESP
+  CERT_RESP=$(curl -sk \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"public_key\": \"${PUB_KEY}\", \"principals\": [\"ztna\", \"${ZTNA_USER}\"]}" \
+    "${CP_API}/api/v1/credentials/ssh-cert" 2>&1)
+
+  local CERT
+  CERT=$(echo "$CERT_RESP" | python3 -c \
+    "import sys,json; d=json.load(sys.stdin); print(d.get('certificate',''))" 2>/dev/null || true)
+
+  if [[ -z "$CERT" ]]; then
+    echo -e "  ${RED}✗ Certificat SSH non obtenu${RST}"
+    echo -e "  ${DIM}Réponse CP: ${CERT_RESP:0:300}${RST}"
+    return 1
+  fi
+
+  echo "$CERT" > "$CERT_FILE"
+  chmod 600 "$CERT_FILE"
+
+  echo -e "  ${GREEN}${BOLD}✓ Certificat SSH obtenu${RST}"
+  echo ""
+  echo -e "  ${BOLD}  Détails du certificat :${RST}"
+  ssh-keygen -L -f "$CERT_FILE" 2>/dev/null | grep -E '^\s+(Type|Key ID|Valid|Principals|Serial)' | \
+    while IFS= read -r line; do echo -e "    ${line}"; done
+  echo ""
+  echo -e "  ${DIM}  Fichiers : ${KEY_FILE}  +  ${CERT_FILE}${RST}"
+}
+
+client_step_3_device_cert() {
+  local TOKEN="$1"
+  client_header "Étape 3 — Émission Certificat Device X.509 (RÉEL)"
+  echo ""
+  echo -e "  ${BOLD}\$ ztna cert --type device${RST}"
+  echo -e "  ${DIM}Génération bi-clé ECDSA P-256 + CSR + signature par le CP${RST}"
+  echo ""
+
+  local DEVICE_KEY="$DEMO_DIR/device.key"
+  local DEVICE_CSR="$DEMO_DIR/device.csr"
+  local DEVICE_CRT="$DEMO_DIR/device.crt"
+
+  echo -e "  ${DIM}→ openssl ecparam -name prime256v1 -genkey${RST}"
+  openssl ecparam -name prime256v1 -genkey -noout -out "$DEVICE_KEY" 2>/dev/null
+  echo -e "  ${GREEN}✓${RST} Clé ECDSA P-256 générée"
+
+  echo -e "  ${DIM}→ openssl req -new -subj '/CN=${ZTNA_USER}/O=ztna-admins'${RST}"
+  openssl req -new -key "$DEVICE_KEY" \
+    -subj "/CN=${ZTNA_USER}/O=ztna-admins" \
+    -out "$DEVICE_CSR" 2>/dev/null
+  echo -e "  ${GREEN}✓${RST} CSR généré"
+
+  echo ""
+  echo -e "  ${DIM}→ POST ${CP_API}/api/v1/credentials/device-cert${RST}"
+
+  local CSR_JSON
+  CSR_JSON=$(python3 -c "import json; print(json.dumps(open('${DEVICE_CSR}').read()))" 2>/dev/null)
+
+  local CERT_RESP
+  CERT_RESP=$(curl -sk \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"csr_pem\": ${CSR_JSON}}" \
+    "${CP_API}/api/v1/credentials/device-cert" 2>&1)
+
+  local CERT_PEM
+  CERT_PEM=$(echo "$CERT_RESP" | python3 -c \
+    "import sys,json; d=json.load(sys.stdin); print(d.get('certificate_pem',''))" 2>/dev/null || true)
+
+  if [[ -z "$CERT_PEM" ]]; then
+    echo -e "  ${RED}✗ Certificat device non obtenu${RST}"
+    echo -e "  ${DIM}Réponse CP: ${CERT_RESP:0:300}${RST}"
+    return 1
+  fi
+
+  echo "$CERT_PEM" > "$DEVICE_CRT"
+  chmod 600 "$DEVICE_CRT"
+
+  local SUBJECT SERIAL EXPIRY ISSUER
+  SUBJECT=$(openssl x509 -noout -subject -in "$DEVICE_CRT" 2>/dev/null | sed 's/subject= *//')
+  SERIAL=$(openssl x509 -noout -serial -in "$DEVICE_CRT" 2>/dev/null | sed 's/serial=//')
+  EXPIRY=$(openssl x509 -noout -enddate -in "$DEVICE_CRT" 2>/dev/null | sed 's/notAfter=//')
+  ISSUER=$(openssl x509 -noout -issuer -in "$DEVICE_CRT" 2>/dev/null | sed 's/issuer= *//')
+
+  echo ""
+  echo -e "  ${GREEN}${BOLD}✓ Certificat Device X.509 obtenu${RST}"
+  echo ""
+  echo -e "  ${BOLD}  Détails du certificat :${RST}"
+  echo -e "    Subject : ${SUBJECT}"
+  echo -e "    Serial  : ${SERIAL}"
+  echo -e "    Issuer  : ${ISSUER}"
+  echo -e "    Expire  : ${EXPIRY}"
+  echo ""
+  echo -e "  ${DIM}  Fichiers : ${DEVICE_KEY}  +  ${DEVICE_CRT}${RST}"
+}
+
+client_step_4() {
+  load_scenario
+  clear
+  client_header "Étape 4 — Découverte des Ressources Publiées (RÉEL)"
+  echo ""
+  echo -e "  ${BOLD}\$ ztna resources${RST}"
+  echo -e "  ${DIM}Récupération des ressources publiées depuis le CP${RST}"
+  echo ""
+
+  local TOKEN
+  TOKEN=$(cat "$DEMO_DIR/oidc_token" 2>/dev/null || true)
+  [[ -z "$TOKEN" ]] && { echo -e "  ${RED}✗ Token OIDC manquant${RST}"; return 1; }
+
+  echo -e "  ${DIM}→ GET ${CP_API}/api/v1/resources${RST}"
+  echo ""
+
+  local RESOURCES_RESP
+  RESOURCES_RESP=$(curl -sk \
+    -H "Authorization: Bearer ${TOKEN}" \
+    "${CP_API}/api/v1/resources" 2>&1)
+
+  local PARSED
+  PARSED=$(echo "$RESOURCES_RESP" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    resources = data if isinstance(data, list) else data.get('resources', data.get('items', [data]))
+    if not isinstance(resources, list):
+        resources = [resources]
+    print(f'  Nombre de ressources : {len(resources)}')
+    print()
+    fmt = '  {:<22} {:<8} {:<14} {:<28} {}'
+    print(fmt.format('NOM', 'TYPE', 'ACCESS', 'BACKEND', 'DESCRIPTION'))
+    print(fmt.format('───', '────', '──────', '───────', '───────────'))
+    for r in resources:
+        name = r.get('name', '?')
+        rtype = r.get('type', '?')
+        access = r.get('access_mode', '?')
+        backend = r.get('backend', '?')
+        desc = r.get('description', r.get('display_name', ''))[:40]
+        print(fmt.format(name, rtype, access, backend, desc))
+except Exception as e:
+    print(f'  (Parsing error: {e})')
+" 2>/dev/null)
+
+  if [[ -n "$PARSED" ]]; then
+    echo "$PARSED"
+  else
+    echo -e "  ${DIM}Réponse brute :${RST}"
+    echo "$RESOURCES_RESP" | python3 -m json.tool 2>/dev/null | head -30 || echo "$RESOURCES_RESP" | head -10
+  fi
+
+  echo ""
+  echo -e "  ${GREEN}${BOLD}✓ Ressources récupérées depuis le Control Plane${RST}"
+}
+
+client_step_5() {
+  load_scenario
+  clear
+
+  case "$RES_TYPE" in
+    ssh)  client_step_5_ssh ;;
+    http) client_step_5_http ;;
+    db)   client_step_5_db ;;
+  esac
+}
+
+client_step_5_ssh() {
+  client_header "Étape 5 — Connexion SSH via ZTNA (RÉEL)"
+  echo ""
+  echo -e "  ${BOLD}\$ ztna access ${RES_NAME}${RST}"
+  echo ""
+
+  local KEY_FILE="$DEMO_DIR/id_ztna_alice"
+  local CERT_FILE="${KEY_FILE}-cert.pub"
+
+  if [[ ! -f "$KEY_FILE" || ! -f "$CERT_FILE" ]]; then
+    echo -e "  ${RED}✗ Certificat SSH manquant — exécutez l'étape 3${RST}"
+    echo "done" > "$DEMO_DIR/client-done"
+    return 1
+  fi
+
+  echo -e "  ${BOLD}Commande SSH réelle :${RST}"
+  echo -e "  ${DIM}ssh -i ${KEY_FILE} -i ${CERT_FILE} \\${RST}"
+  echo -e "  ${DIM}    -J ztna@${GW_IP} ztna@${APP_IP}${RST}"
+  echo ""
+  echo -e "  ${YELLOW}→ Session SSH interactive — tapez 'exit' pour terminer${RST}"
+  echo -e "  ${DIM}───────────────────────────────────────────────────────${RST}"
+  echo ""
+
+  ssh ${SSH_OPTS} \
+    -i "$KEY_FILE" \
+    -i "$CERT_FILE" \
+    -J "ztna@${GW_IP}" \
+    "ztna@${APP_IP}" || true
+
+  echo ""
+  echo -e "  ${DIM}───────────────────────────────────────────────────────${RST}"
+  echo -e "  ${GREEN}${BOLD}✓ Session SSH terminée${RST}"
+  echo "done" > "$DEMO_DIR/client-done"
+}
+
+client_step_5_http() {
+  client_header "Étape 5 — Accès HTTP via mTLS ZTNA (RÉEL)"
+  echo ""
+  echo -e "  ${BOLD}\$ ztna access ${RES_NAME}${RST}"
+  echo ""
+
+  local DEVICE_CRT="$DEMO_DIR/device.crt"
+  local DEVICE_KEY="$DEMO_DIR/device.key"
+
+  if [[ ! -f "$DEVICE_CRT" || ! -f "$DEVICE_KEY" ]]; then
+    echo -e "  ${RED}✗ Certificat device manquant — exécutez l'étape 3${RST}"
+    echo "done" > "$DEMO_DIR/client-done"
+    return 1
+  fi
+
+  echo -e "  ${DIM}Tunnel mTLS vers ${GW_IP}:${GW_PORT} avec certificat device${RST}"
+  echo ""
+
+  python3 - "${GW_IP}" "${GW_PORT}" "${DEVICE_CRT}" "${DEVICE_KEY}" << 'PYEOF'
+import sys, ssl, socket, json
+
+gw_host, gw_port, cert, key = sys.argv[1:]
+gw_port = int(gw_port)
+
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
+ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+ctx.load_cert_chain(certfile=cert, keyfile=key)
+
+print(f"  [mTLS] Connexion vers {gw_host}:{gw_port} ...")
+raw = socket.create_connection((gw_host, gw_port), timeout=15)
+tls = ctx.wrap_socket(raw, server_hostname=gw_host)
+print(f"  [mTLS] Handshake OK — protocole: {tls.version()}")
+print(f"  [mTLS] Cipher: {tls.cipher()[0]}")
+
+connect_req = json.dumps({
+    "resource_type": "http",
+    "resource_match": "http:lan-app:80",
+    "action": "connect"
+})
+tls.sendall((connect_req + "\n").encode())
+print(f"  [mTLS] ConnectRequest envoyé: {connect_req}")
+
+buf = b""
+while b"\n" not in buf:
+    chunk = tls.recv(4096)
+    if not chunk:
+        break
+    buf += chunk
+
+resp = json.loads(buf.split(b"\n")[0])
+print()
+print("  ┌─ ConnectResponse (réel) ────────────────────────────────")
+print(f"  │  allowed     : {resp.get('allowed')}")
+print(f"  │  decision_id : {resp.get('decision_id', '—')}")
+print(f"  │  reason      : {resp.get('reason', '—')}")
+print("  └─────────────────────────────────────────────────────────")
+
+if not resp.get("allowed"):
+    print(f"\n  [REFUSÉ] Accès non autorisé par le PEP")
+    sys.exit(1)
+
+print(f"\n  [AUTORISÉ] Tunnel TCP ouvert → lan-app:80")
+
+http_req = "GET / HTTP/1.0\r\nHost: lan-app\r\n\r\n"
+tls.sendall(http_req.encode())
+print(f"  [HTTP] GET / HTTP/1.0 envoyé")
+
+tls.settimeout(10.0)
+response = b""
+try:
+    while True:
+        data = tls.recv(4096)
+        if not data:
+            break
+        response += data
+except:
+    pass
+
+if response:
+    decoded = response.decode(errors="replace")
+    print()
+    print("  ┌─ Réponse HTTP depuis lan-app (réelle) ──────────────────")
+    for line in decoded.split("\n")[:20]:
+        print(f"  │ {line}")
+    print("  └─────────────────────────────────────────────────────────")
+else:
+    print("\n  [ERREUR] Aucune réponse HTTP reçue")
+
+tls.close()
+print("\n  ✓ Test mTLS terminé avec succès")
+PYEOF
+
+  echo ""
+  echo -e "  ${GREEN}${BOLD}✓ Accès HTTP via mTLS ZTNA terminé${RST}"
+  echo "done" > "$DEMO_DIR/client-done"
+}
+
+client_step_5_db() {
+  client_header "Étape 5 — Accès PostgreSQL via mTLS ZTNA (RÉEL)"
+  echo ""
+  echo -e "  ${BOLD}\$ ztna access ${RES_NAME}${RST}"
+  echo ""
+
+  local DEVICE_CRT="$DEMO_DIR/device.crt"
+  local DEVICE_KEY="$DEMO_DIR/device.key"
+
+  if [[ ! -f "$DEVICE_CRT" || ! -f "$DEVICE_KEY" ]]; then
+    echo -e "  ${RED}✗ Certificat device manquant — exécutez l'étape 3${RST}"
+    echo "done" > "$DEMO_DIR/client-done"
+    return 1
+  fi
+
+  local USE_MTLS_TUNNEL=false
+
+  if command -v psql >/dev/null 2>&1; then
+    USE_MTLS_TUNNEL=true
+    echo -e "  ${GREEN}✓${RST} psql disponible localement → tunnel mTLS TCP"
+  else
+    echo -e "  ${DIM}psql non disponible localement → tunnel SSH ZTNA${RST}"
+
+    # Obtenir un cert SSH si nécessaire
+    local KEY_FILE="$DEMO_DIR/id_ztna_alice"
+    local CERT_FILE="${KEY_FILE}-cert.pub"
+    if [[ ! -f "$KEY_FILE" || ! -f "$CERT_FILE" ]]; then
+      echo -e "  ${DIM}Demande automatique d'un certificat SSH pour le tunnel...${RST}"
+      local TOKEN
+      TOKEN=$(cat "$DEMO_DIR/oidc_token" 2>/dev/null || true)
+      if [[ -n "$TOKEN" ]]; then
+        rm -f "$KEY_FILE" "$KEY_FILE.pub" "$CERT_FILE"
+        ssh-keygen -t ed25519 -f "$KEY_FILE" -N "" -C "ztna-${ZTNA_USER}" -q
+        local PUB_KEY
+        PUB_KEY=$(cat "${KEY_FILE}.pub")
+        local CERT_RESP
+        CERT_RESP=$(curl -sk \
+          -H "Authorization: Bearer ${TOKEN}" \
+          -H "Content-Type: application/json" \
+          -d "{\"public_key\": \"${PUB_KEY}\", \"principals\": [\"ztna\", \"${ZTNA_USER}\"]}" \
+          "${CP_API}/api/v1/credentials/ssh-cert" 2>&1)
+        local CERT
+        CERT=$(echo "$CERT_RESP" | python3 -c \
+          "import sys,json; d=json.load(sys.stdin); print(d.get('certificate',''))" 2>/dev/null || true)
+        if [[ -n "$CERT" ]]; then
+          echo "$CERT" > "$CERT_FILE"
+          chmod 600 "$CERT_FILE"
+          echo -e "  ${GREEN}✓${RST} Certificat SSH obtenu pour le tunnel"
+        fi
+      fi
+    fi
+  fi
+
+  echo ""
+
+  if $USE_MTLS_TUNNEL; then
+    # ── mTLS TCP tunnel via ztna-tcp-tunnel.py ──
+    echo -e "  ${BOLD}Tunnel mTLS TCP vers PostgreSQL :${RST}"
+    echo -e "  ${DIM}  localhost:${LOCAL_PORT} → mTLS ${GW_IP}:${GW_PORT} → pg lan-app:5432${RST}"
+    echo ""
+
+    local READY_FILE="$DEMO_DIR/tunnel-ready"
+    rm -f "$READY_FILE"
+
+    TUNNEL_READY_FILE="$READY_FILE" python3 "${SCRIPT_DIR}/ztna-tcp-tunnel.py" \
+      --listen "${LOCAL_PORT}" \
+      --gateway "${GW_IP}:${GW_PORT}" \
+      --cert "$DEVICE_CRT" \
+      --key "$DEVICE_KEY" \
+      --resource "db:pg-staging" &
+    local TUNNEL_PID=$!
+
+    local wait_count=0
+    while [[ ! -f "$READY_FILE" && $wait_count -lt 30 ]]; do
+      sleep 0.3
+      wait_count=$((wait_count + 1))
+      if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+        echo -e "  ${RED}✗ Tunnel mTLS échoué${RST}"
+        echo -e "  ${DIM}Vérifiez la route db:pg-staging sur le gateway (make deploy-db)${RST}"
+        echo "done" > "$DEMO_DIR/client-done"
+        return 1
+      fi
+    done
+
+    echo -e "  ${GREEN}✓${RST} Tunnel mTLS actif (PID: $TUNNEL_PID)"
+    sleep 0.5
+    echo ""
+    echo -e "  ${BOLD}\$ psql -h localhost -p ${LOCAL_PORT} -U alice appdb${RST}"
+    echo -e "  ${YELLOW}→ Session PostgreSQL interactive — tapez '\\q' pour terminer${RST}"
+    echo -e "  ${DIM}───────────────────────────────────────────────────────${RST}"
+    echo ""
+
+    PGPASSWORD=ztna2026 psql -h localhost -p "${LOCAL_PORT}" -U alice appdb 2>&1 || true
+
+    echo ""
+    echo -e "  ${DIM}───────────────────────────────────────────────────────${RST}"
+    kill "$TUNNEL_PID" 2>/dev/null; wait "$TUNNEL_PID" 2>/dev/null || true
+    echo -e "  ${GREEN}✓${RST} Tunnel mTLS fermé"
+
+  else
+    # ── SSH tunnel fallback ──
+    local KEY_FILE="$DEMO_DIR/id_ztna_alice"
+    local CERT_FILE="${KEY_FILE}-cert.pub"
+
+    echo -e "  ${BOLD}Tunnel SSH ZTNA vers PostgreSQL :${RST}"
+    echo -e "  ${DIM}  ssh -J ztna@${GW_IP} ztna@${APP_IP} → psql${RST}"
+    echo ""
+    echo -e "  ${YELLOW}→ Session PostgreSQL interactive via SSH ZTNA — tapez '\\q' pour terminer${RST}"
+    echo -e "  ${DIM}───────────────────────────────────────────────────────${RST}"
+    echo ""
+
+    ssh ${SSH_OPTS} \
+      -i "$KEY_FILE" \
+      -i "$CERT_FILE" \
+      -J "ztna@${GW_IP}" \
+      "ztna@${APP_IP}" \
+      -t "PGPASSWORD=ztna2026 psql -U alice appdb" 2>/dev/null || true
+
+    echo ""
+    echo -e "  ${DIM}───────────────────────────────────────────────────────${RST}"
+  fi
+
+  echo -e "  ${GREEN}${BOLD}✓ Session PostgreSQL terminée${RST}"
+  echo "done" > "$DEMO_DIR/client-done"
+}
+
+client_step_6() {
+  load_scenario
+  clear
+  client_header "Résumé de la session"
+  echo ""
+  echo -e "  ${GREEN}${BOLD}✓ Opérations ZTNA réelles complétées :${RST}"
+  echo ""
+  echo -e "    ${GREEN}✓${RST}  Authentification OIDC (Keycloak ${CP_IP}:8443)"
+  if [[ "$RES_TYPE" == "ssh" ]]; then
+    echo -e "    ${GREEN}✓${RST}  Certificat SSH signé par le CP (ZTNA SSH CA)"
+  else
+    echo -e "    ${GREEN}✓${RST}  Certificat Device X.509 signé par le CP (Device CA)"
+  fi
+  echo -e "    ${GREEN}✓${RST}  Découverte des ressources publiées (CP API)"
+  echo -e "    ${GREEN}✓${RST}  Accès réel à ${BOLD}${RES_NAME}${RST} (${RES_TYPE})"
+  echo ""
+  echo -e "  ${DIM}  Logs réels visibles dans les fenêtres GATEWAY et CONTROL PLANE${RST}"
+  echo -e "  ${DIM}  Aucune donnée simulée — tout a été exécuté sur l'infrastructure réelle${RST}"
+}
+
+# ============================================================================
+# RUN CLIENT — Watches for step changes, executes real commands
+# ============================================================================
+
+run_client() {
+  printf '\033]0;ZTNA — CLIENT\007'
+  local last_step="-1"
+
+  while [ ! -d "$DEMO_DIR" ]; do sleep 0.2; done
+
+  clear
+  echo -e "${BOLD}${CYAN}"
+  echo "    ╔══════════════════════════════════════════════╗"
+  echo "    ║  ZTNA — Client Terminal (Real Operations)   ║"
+  echo "    ╚══════════════════════════════════════════════╝"
+  echo -e "${RST}"
+  echo -e "  ${DIM}En attente du CONTROLLER...${RST}"
+
+  while true; do
+    local current
+    current=$(cat "$DEMO_DIR/client-step" 2>/dev/null || echo "")
+    if [[ "$current" != "$last_step" && -n "$current" ]]; then
+      last_step="$current"
+      load_scenario
+      "client_step_${current}" 2>&1 || true
+    fi
+    sleep 0.3
+  done
+}
+
+# ============================================================================
+# LIVE LOGS — SSH journalctl in CP/GW windows
+# ============================================================================
+
+run_live_logs() {
+  local component="$1"
+  local ip="" label="" service=""
+
+  case "$component" in
+    cp) ip="$CP_IP"; label="CONTROL PLANE"; service="ztna-cp" ;;
+    gw) ip="$GW_IP"; label="GATEWAY"; service="ztna-gateway" ;;
+    *)  echo "Usage: $0 --live-logs <cp|gw>"; exit 1 ;;
+  esac
+
+  printf '\033]0;ZTNA — %s\007' "$label"
+  clear
+  echo -e "${BOLD}${CYAN}  ━━━ ${label} — LIVE LOGS ━━━${RST}"
+  echo -e "  ${DIM}${ip} — journalctl -u ${service} -f${RST}"
+  echo -e "  ${DIM}Les logs réels apparaissent en temps réel${RST}"
+  echo ""
+
+  while true; do
+    ${SSH_CMD} ztna@"${ip}" \
+      "sudo journalctl -u ${service} -f --no-pager --output=short-iso 2>&1" \
+      2>/dev/null || true
+    echo -e "\n  ${YELLOW}[!]${RST} Connexion perdue — reconnexion dans 3s..."
+    sleep 3
+    echo -e "  ${DIM}Reconnexion à ${ip}...${RST}"
+  done
+}
+
+# ============================================================================
+# DISPLAY LOOP — File-based display for FLOW window
 # ============================================================================
 
 run_display() {
   local pane="$1"
   local last_epoch=""
 
-  # Set terminal window title
-  printf '\033]0;ZTNA — %s\007' "$pane"
+  printf '\033]0;ZTNA — FLUX\007'
 
   while [ ! -d "$DEMO_DIR" ]; do sleep 0.2; done
 
   while true; do
     local epoch
-    epoch=$(cat "$DEMO_DIR/epoch-$pane" 2>/dev/null || echo "")
+    epoch=$(cat "$DEMO_DIR/epoch-${pane}" 2>/dev/null || echo "")
     if [[ "$epoch" != "$last_epoch" && -n "$epoch" ]]; then
       last_epoch="$epoch"
       printf '\033[H'
-      cat "$DEMO_DIR/pane-$pane" 2>/dev/null || true
+      cat "$DEMO_DIR/pane-${pane}" 2>/dev/null || true
       printf '\033[J'
     fi
     sleep 0.12
@@ -190,730 +1054,23 @@ run_display() {
 }
 
 # ============================================================================
-# STEP FUNCTIONS (0-10)
-# ============================================================================
-
-step_0() {
-  set_pane client \
-    "$(hdr_idle "CLIENT CLI" "$CLIENT_IP")" \
-    "" \
-    "  ${DIM}ZTNA Client CLI v1.0${RST}" \
-    "  ${DIM}Prêt pour la démonstration${RST}" \
-    "" \
-    "  ${DIM}Commandes disponibles :${RST}" \
-    "  ${DIM}  ztna login      → Auth OIDC${RST}" \
-    "  ${DIM}  ztna cert       → Certificat device${RST}" \
-    "  ${DIM}  ztna resources  → Lister ressources publiées${RST}" \
-    "  ${DIM}  ztna access     → Accéder à une ressource${RST}"
-
-  set_pane gateway \
-    "$(hdr_idle "GATEWAY PEP" "$GW_IP")" \
-    "" \
-    "  ${DIM}ZTNA Gateway v1.0${RST}" \
-    "  ${DIM}mTLS Listener :8443${RST}" \
-    "" \
-    "  ${DIM}Composants :${RST}" \
-    "  ${DIM}  - CRL Auto-Refresh${RST}" \
-    "  ${DIM}  - Session Manager${RST}" \
-    "  ${DIM}  - Decision Cache${RST}" \
-    "  ${DIM}  - SSRF Protection${RST}"
-
-  set_pane cp \
-    "$(hdr_idle "CONTROL PLANE" "$CP_IP")" \
-    "" \
-    "  ${DIM}ZTNA Control Plane v1.0${RST}" \
-    "  ${DIM}API :8080 / PEP :8443${RST}" \
-    "" \
-    "  ${DIM}Services :${RST}" \
-    "  ${DIM}  - PKI / CA${RST}" \
-    "  ${DIM}  - Policy Engine ABAC${RST}" \
-    "  ${DIM}  - Session Store${RST}" \
-    "  ${DIM}  - OIDC Validation${RST}"
-
-  set_pane flow \
-    "" \
-    "  ${BOLD}${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RST}" \
-    "  ${BOLD}${CYAN}║                     ARCHITECTURE ZTNA — ZERO TRUST                         ║${RST}" \
-    "  ${BOLD}${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RST}" \
-    "" \
-    "  ${GREEN}  CLIENT${RST}              ${YELLOW}  GATEWAY${RST}                  ${CYAN}  CONTROL PLANE${RST}        ${MAGENTA}  RESOURCE${RST}" \
-    "  ${GREEN}  ┌──────┐${RST}            ${YELLOW}  ┌──────────┐${RST}              ${CYAN}  ┌────────────┐${RST}      ${MAGENTA}  ┌────────┐${RST}" \
-    "  ${GREEN}  │ CLI  │${RST}            ${YELLOW}  │  PEP     │${RST}              ${CYAN}  │  PDP       │${RST}      ${MAGENTA}  │ SSH/   │${RST}" \
-    "  ${GREEN}  │      │${RST}   mTLS     ${YELLOW}  │  Proxy   │${RST}   authz      ${CYAN}  │  PKI       │${RST}      ${MAGENTA}  │ HTTP   │${RST}" \
-    "  ${GREEN}  │ OIDC │${RST}  ════════  ${YELLOW}  │  CRL     │${RST}  ═════════   ${CYAN}  │  Policy    │${RST}      ${MAGENTA}  │        │${RST}" \
-    "  ${GREEN}  │ Cert │${RST}   TLS1.3   ${YELLOW}  │  SSRF    │${RST}   PEP auth   ${CYAN}  │  OIDC      │${RST}      ${MAGENTA}  │  :22   │${RST}" \
-    "  ${GREEN}  └──────┘${RST}            ${YELLOW}  └──────────┘${RST}              ${CYAN}  └────────────┘${RST}      ${MAGENTA}  │  :80   │${RST}" \
-    "  ${DIM}  10.10.10.10${RST}          ${DIM}  10.10.10.20${RST}                ${DIM}  10.10.20.30${RST}        ${MAGENTA}  └────────┘${RST}" \
-    "  ${DIM}  (WAN)${RST}                ${DIM}  (WAN/DMZ/LAN)${RST}              ${DIM}  (DMZ)${RST}              ${DIM}  10.10.30.10${RST}"
-}
-
-step_1() {
-  set_pane flow \
-    "" \
-    "  ${BOLD}Scénarios de démonstration disponibles :${RST}" \
-    "" \
-    "  ${BOLD}${GREEN}  [1]${RST}  ${BOLD}Accès SSH${RST} — ztna access ssh-dev-01" \
-    "       Ressource publiée : ssh-dev-01 (ssh)  →  Backend : ${BACKEND_IP}:22" \
-    "       Politique : allow ztna-admins sur ssh:*" \
-    "" \
-    "  ${BOLD}${BLUE}  [2]${RST}  ${BOLD}Accès Web${RST} — ztna access grafana-internal" \
-    "       Ressource publiée : grafana-internal (web)  →  Backend : ${BACKEND_IP}:3000" \
-    "       Politique : allow ztna-admins sur web:*" \
-    "" \
-    "  ${BOLD}${YELLOW}  [3]${RST}  ${BOLD}Accès PostgreSQL${RST} — ztna access pg-staging" \
-    "       Ressource publiée : pg-staging (db)  →  Backend : ${BACKEND_IP}:5432" \
-    "       Politique : allow ztna-dba sur db:*" \
-    "" \
-    "  ${DIM}  Appuyez sur 1, 2 ou 3 dans la fenêtre CONTROLLER${RST}"
-}
-
-step_2() {
-  load_scenario
-  TSEC=0
-  set_pane gateway "$(hdr_idle "GATEWAY PEP" "$GW_IP")" "" "  ${DIM}  En attente de connexion client...${RST}"
-
-  anim_pane client 0.18 \
-    "$(hdr_active "CLIENT CLI" "$CLIENT_IP")" \
-    "" \
-    "  \$ ${BOLD}ztna login --provider keycloak${RST}" \
-    "" \
-    "  $(jlog INFO "début authentification OIDC" "provider" "keycloak" "realm" "ztna")" \
-    "  $(jlog INFO "redirection vers IdP" "url" "https://${CP_IP}:8080/auth/realms/ztna/protocol/openid-connect/auth")" \
-    "  ${DIM}  → Ouverture du navigateur... authentification en cours${RST}" \
-    "  $(jlog INFO "callback OIDC reçu" "code" "SplxlOBe...XQFe" "state" "xyz")" \
-    "  $(jlog INFO "échange code → tokens" "token_endpoint" "https://${CP_IP}:8080/auth/realms/ztna/token")" \
-    "  $(jlog INFO "tokens obtenus" "access_token" "eyJhbG...truncated" "expires_in" "300")" \
-    "" \
-    "  ${GREEN}${BOLD}  ✓ Authentification OIDC réussie${RST}" \
-    "  ${DIM}    Utilisateur : alice | Groupes : ztna-admins, ztna-dba${RST}" \
-    "  ${DIM}    JWT sub : ${JWT_SUB}${RST}" &
-  local pid1=$!
-
-  sleep 0.5
-  anim_pane cp 0.2 \
-    "$(hdr_active "CONTROL PLANE" "$CP_IP")" \
-    "" \
-    "  $(jlog INFO "requête OIDC authorize reçue" "client_id" "ztna-cli" "redirect_uri" "http://localhost:9876/callback")" \
-    "  $(jlog INFO "authentification utilisateur" "username" "alice" "realm" "ztna")" \
-    "  $(jlog INFO "émission access_token" "sub" "${JWT_SUB}" "groups" "[ztna-admins,ztna-dba]" "expires_in" "300")" \
-    "  $(jlog INFO "émission refresh_token" "sub" "${JWT_SUB}" "expires_in" "1800")" &
-  local pid2=$!
-
-  set_pane flow \
-    "" \
-    "  ${BOLD}Flux OIDC — Authorization Code Flow${RST}" \
-    "" \
-    "    ${GREEN}CLIENT${RST}                                              ${CYAN}KEYCLOAK (IdP)${RST}" \
-    "    ┌──────┐                                            ┌────────────┐" \
-    "    │      │ ─── 1. /authorize (client_id, scope) ────► │            │" \
-    "    │      │                                             │  Realm:    │" \
-    "    │ CLI  │ ◄── 2. Login page (user/password) ──────── │  ztna      │" \
-    "    │      │                                             │            │" \
-    "    │      │ ─── 3. credentials (alice / ****) ────────► │  Verify    │" \
-    "    │      │                                             │  ✓         │" \
-    "    │      │ ◄── 4. Redirect + auth code ─────────────── │            │" \
-    "    │      │                                             │            │" \
-    "    │      │ ─── 5. /token (code) ────────────────────► │  Issue     │" \
-    "    │      │                                             │  JWT       │" \
-    "    │      │ ◄── 6. access_token + refresh_token ────── │            │" \
-    "    └──────┘                                            └────────────┘" \
-    "" \
-    "    ${GREEN}JWT Claims :${RST} sub=${JWT_SUB}, groups=[ztna-admins, ztna-dba]"
-
-  wait $pid1 $pid2 2>/dev/null || true
-}
-
-step_3() {
-  load_scenario
-  TSEC=10
-
-  anim_pane client 0.18 \
-    "$(hdr_active "CLIENT CLI" "$CLIENT_IP")" \
-    "" \
-    "  \$ ${BOLD}ztna cert --request${RST}" \
-    "" \
-    "  $(jlog INFO "génération bi-clé RSA 2048" "algorithm" "RSA" "bits" "2048")" \
-    "  $(jlog INFO "création CSR" "cn" "alice" "org" "ztna-admins,ztna-dba")" \
-    "  $(jlog INFO "envoi CSR au Control Plane" "url" "https://${CP_IP}:8080/api/v1/credentials/device-cert" "jwt" "Bearer eyJh...")" \
-    "  ${DIM}  → Attente signature CA...${RST}" \
-    "  $(jlog INFO "certificat device reçu" "serial" "${CERT_SERIAL}" "cn" "alice" "valid_hours" "24")" \
-    "  $(jlog INFO "CA certificate sauvegardé" "file" "client-ca.crt")" \
-    "" \
-    "  ${GREEN}${BOLD}  ✓ Certificat X.509 obtenu + CA sauvegardée${RST}" \
-    "  ${DIM}    Serial : ${CERT_SERIAL}${RST}" \
-    "  ${DIM}    CN=alice, O=ztna-admins,ztna-dba${RST}" \
-    "  ${DIM}    Validité : 24h | Émetteur : ZTNA Device CA${RST}" &
-  local pid1=$!
-
-  sleep 0.6
-  anim_pane cp 0.2 \
-    "$(hdr_active "CONTROL PLANE" "$CP_IP")" \
-    "" \
-    "  $(jlog INFO "requête /credentials/device-cert reçue" "method" "POST" "remote" "${CLIENT_IP}")" \
-    "  $(jlog INFO "validation JWT" "sub" "${JWT_SUB}" "issuer" "keycloak" "valid" "true")" \
-    "  $(jlog INFO "extraction groupes depuis JWT" "groups" "[ztna-admins,ztna-dba]")" \
-    "  $(jlog INFO "signature CSR par Device CA" "serial" "${CERT_SERIAL}" "cn" "alice" "org" "[ztna-admins,ztna-dba]")" \
-    "  $(jlog INFO "certificat émis" "serial" "${CERT_SERIAL}" "expires" "2026-03-10T15:30:00Z" "key_type" "RSA")" &
-  local pid2=$!
-
-  set_pane gateway "$(hdr_idle "GATEWAY PEP" "$GW_IP")" "" \
-    "  ${DIM}  En attente de connexion client...${RST}" "" \
-    "  $(jlog INFO "CRL auto-refresh" "serials_count" "0" "last_fetch" "2026-03-09T15:29:00Z")" \
-    "  $(jlog INFO "heartbeat envoyé" "pep_id" "ztna-gw-01" "status" "ok")"
-
-  set_pane flow \
-    "" \
-    "  ${BOLD}Émission de certificat device — PKI Zero Trust${RST}" \
-    "" \
-    "    ${GREEN}CLIENT${RST}                                              ${CYAN}CONTROL PLANE (PKI)${RST}" \
-    "    ┌──────┐                                            ┌────────────┐" \
-    "    │      │ ─── 1. Generate RSA 2048 keypair           │            │" \
-    "    │      │                                             │            │" \
-    "    │ CSR  │ ─── 2. POST /credentials/device-cert ────► │  Validate  │" \
-    "    │      │        (CSR + JWT Bearer)                   │  JWT       │" \
-    "    │      │                                             │  ✓         │" \
-    "    │      │                                             │            │" \
-    "    │      │                                             │  Sign CSR  │" \
-    "    │      │                                             │  Device CA │" \
-    "    │      │ ◄── 3. X.509 Cert + CA Cert ──────────────  │  Serial:   │" \
-    "    │      │        CN=alice O=ztna-admins               │  ${CERT_SERIAL}│" \
-    "    └──────┘                                            └────────────┘" \
-    "" \
-    "    ${YELLOW}Groupes OIDC → Organization (X.509)${RST} : les groupes Keycloak sont" \
-    "    encodés dans le champ Organization du certificat pour autorisation ABAC."
-
-  wait $pid1 $pid2 2>/dev/null || true
-}
-
-step_4() {
-  load_scenario
-  TSEC=15
-
-  anim_pane client 0.18 \
-    "$(hdr_active "CLIENT CLI" "$CLIENT_IP")" \
-    "" \
-    "  \$ ${BOLD}ztna resources${RST}" \
-    "" \
-    "  $(jlog INFO "récupération des ressources publiées" "endpoint" "https://${CP_IP}:8080/api/v1/resources")" \
-    "" \
-    "  NOM                  TYPE     ACCÈS            DESCRIPTION" \
-    "  ---                  ----     -----            -----------" \
-    "  grafana-internal     web      http-proxy       Grafana interne" \
-    "  ssh-dev-01           ssh      ssh-cert         Serveur SSH dev" \
-    "  pg-staging           db       tcp-tunnel       PostgreSQL staging" \
-    "" \
-    "  ${GREEN}${BOLD}  ✓ 3 ressources disponibles${RST}" &
-  local pid1=$!
-
-  sleep 0.5
-  anim_pane cp 0.2 \
-    "$(hdr_active "CONTROL PLANE" "$CP_IP")" \
-    "" \
-    "  $(jlog INFO "GET /api/v1/resources" "sub" "alice" "groups" "[ztna-admins,ztna-dba]")" \
-    "  $(jlog INFO "ressources filtrées par groupes" "count" "3")" &
-  local pid2=$!
-
-  set_pane gateway "$(hdr_idle "GATEWAY PEP" "$GW_IP")" "" \
-    "  ${DIM}  En attente de connexion client...${RST}"
-
-  set_pane flow \
-    "" \
-    "  ${BOLD}Découverte des Ressources Publiées${RST}" \
-    "" \
-    "    ${GREEN}CLIENT${RST}                                              ${CYAN}CONTROL PLANE${RST}" \
-    "    ┌──────┐                                            ┌────────────────┐" \
-    "    │      │ ── GET /api/v1/resources (Bearer JWT) ───► │                │" \
-    "    │      │                                            │  Filter by     │" \
-    "    │ list │                                            │  user groups   │" \
-    "    │      │ ◄── [{name, type, access_mode}] ────────── │                │" \
-    "    └──────┘                                            └────────────────┘" \
-    "" \
-    "    ${BOLD}Ressources publiées (filtrage par groupes OIDC) :${RST}" \
-    "    ┌──────────────────┬──────┬──────────────────────────────┐" \
-    "    │ grafana-internal  │ web  │ http-proxy → ${BACKEND_IP}:3000 │" \
-    "    │ ssh-dev-01        │ ssh  │ ssh-cert → ${BACKEND_IP}:22     │" \
-    "    │ pg-staging        │ db   │ tcp-tunnel → ${BACKEND_IP}:5432 │" \
-    "    └──────────────────┴──────┴──────────────────────────────┘"
-
-  wait $pid1 $pid2 2>/dev/null || true
-}
-
-step_5() {
-  load_scenario
-  TSEC=20
-  set_pane cp "$(hdr_idle "CONTROL PLANE" "$CP_IP")" "" \
-    "  ${DIM}  PKI idle — CRL disponible à /pki/device-ca/crl${RST}"
-
-  anim_pane client 0.18 \
-    "$(hdr_active "CLIENT CLI" "$CLIENT_IP")" \
-    "" \
-    "  \$ ${BOLD}ztna access ${RES_NAME}${RST}" \
-    "" \
-    "  $(jlog INFO "écoute locale ouverte" "addr" "127.0.0.1:${LOCAL_PORT}" "resource" "${RES_NAME}")" \
-    "  ${GREEN}  → Ressource '${RES_NAME}' disponible sur 127.0.0.1:${LOCAL_PORT}${RST}" \
-    "  ${DIM}    Ctrl+C pour fermer le tunnel.${RST}" \
-    "" \
-    "  $(jlog INFO "connexion mTLS vers la Gateway" "addr" "${GW_IP}:8443" "tls" "1.3")" \
-    "  $(jlog INFO "envoi ClientHello" "cipher_suites" "[TLS_AES_256_GCM_SHA384,TLS_CHACHA20_POLY1305]" "curves" "X25519")" \
-    "  $(jlog INFO "présentation certificat client" "serial" "${CERT_SERIAL}" "cn" "alice")" \
-    "  $(jlog INFO "handshake mTLS terminé" "negotiated" "TLS_AES_256_GCM_SHA384" "version" "TLS1.3")" \
-    "" \
-    "  ${GREEN}${BOLD}  ✓ Tunnel mTLS établi avec la Gateway${RST}" &
-  local pid1=$!
-
-  sleep 0.4
-  anim_pane gateway 0.18 \
-    "$(hdr_active "GATEWAY PEP" "$GW_IP")" \
-    "" \
-    "  $(jlog INFO "connexion entrante" "remote" "${CLIENT_IP}:49832" "local" "${GW_IP}:8443")" \
-    "  $(jlog INFO "handshake TLS" "version" "TLS1.3" "cipher" "TLS_AES_256_GCM_SHA384")" \
-    "  $(jlog INFO "certificat client vérifié" "cn" "alice" "serial" "${CERT_SERIAL}" "issuer" "ZTNA Device CA")" \
-    "  $(jlog INFO "vérification CRL" "serial" "${CERT_SERIAL}" "revoked" "false" "crl_size" "0")" \
-    "  $(jlog INFO "extraction identité" "sub" "alice" "groups" "[ztna-admins,ztna-dba]" "source_ip" "${CLIENT_IP}")" \
-    "" \
-    "  ${GREEN}${BOLD}  ✓ Client authentifié — certificat non révoqué${RST}" &
-  local pid2=$!
-
-  set_pane flow \
-    "" \
-    "  ${BOLD}Port Forward Local + Tunnel mTLS + Vérification CRL${RST}" \
-    "" \
-    "    ${GREEN}CLIENT${RST}              ${DIM}TLS 1.3 mTLS${RST}            ${YELLOW}GATEWAY${RST}" \
-    "    ┌──────┐                                    ┌──────────┐        ┌─────────┐" \
-    "    │listen│ 127.0.0.1:${LOCAL_PORT}                    │          │        │  CRL    │" \
-    "    │      │ ══ 1. ClientHello ═══════════════►  │          │        │  Store  │" \
-    "    │cert  │                                     │  TLS     │        │ (0 rev) │" \
-    "    │key   │ ◄═ 2. ServerHello + CertRequest ══  │  Accept  │        └────┬────┘" \
-    "    │      │                                     │          │             │" \
-    "    │      │ ══ 3. Client Certificate ═════════► │  Verify  │ ◄── check ─┘" \
-    "    │      │    (CN=alice, Serial=${CERT_SERIAL})│  Chain ✓ │    not revoked ✓" \
-    "    │      │                                     │          │" \
-    "    │      │ ◄═ 4. Finished ═════════════════ ═  │  Ready   │" \
-    "    └──────┘                                     └──────────┘" \
-    "" \
-    "    ${GREEN}✓${RST} Port forward local 127.0.0.1:${LOCAL_PORT}    ${GREEN}✓${RST} mTLS complet    ${GREEN}✓${RST} CRL OK    ${GREEN}✓${RST} TLS 1.3"
-
-  wait $pid1 $pid2 2>/dev/null || true
-}
-
-step_6() {
-  load_scenario
-  TSEC=30
-  set_pane cp "$(hdr_idle "CONTROL PLANE" "$CP_IP")" "" "  ${DIM}  En attente de requête d'autorisation...${RST}"
-
-  anim_pane client 0.2 \
-    "$(hdr_active "CLIENT CLI" "$CLIENT_IP")" \
-    "" \
-    "  $(jlog INFO "envoi requête CONNECT" "action" "connect" "name" "${RES_NAME}")" \
-    "  ${DIM}  → Requête (length-prefixed JSON, 4 bytes big-endian + payload) :${RST}" \
-    "  ${DIM}    {\"action\":\"connect\",\"resource\":{\"name\":\"${RES_NAME}\"}}${RST}" \
-    "  ${DIM}  → En attente de la décision...${RST}" &
-  local pid1=$!
-
-  sleep 0.3
-  anim_pane gateway 0.18 \
-    "$(hdr_active "GATEWAY PEP" "$GW_IP")" \
-    "" \
-    "  $(jlog INFO "requête CONNECT reçue" "action" "connect" "name" "${RES_NAME}")" \
-    "  $(jlog INFO "résolution ressource via CP" "name" "${RES_NAME}" "endpoint" "/api/v1/pep/resources/${RES_NAME}")" \
-    "  $(jlog INFO "ressource résolue" "name" "${RES_NAME}" "type" "${RES_TYPE}" "backend" "${RES_BACKEND}" "access_mode" "$([ "$RES_TYPE" = web ] && echo http-proxy || ([ "$RES_TYPE" = ssh ] && echo ssh-cert || echo tcp-tunnel))")" \
-    "  $(jlog INFO "consultation decision cache" "key" "alice|connect|${RES_TYPE}:${RES_NAME}" "hit" "false")" \
-    "  $(jlog INFO "cache miss — appel au Control Plane nécessaire")" &
-  local pid2=$!
-
-  set_pane flow \
-    "" \
-    "  ${BOLD}Requête CONNECT — Résolution par Nom${RST}" \
-    "" \
-    "    ${GREEN}CLIENT${RST}                               ${YELLOW}GATEWAY${RST}                       ${CYAN}CONTROL PLANE${RST}" \
-    "    ┌──────┐                             ┌──────────────┐               ┌────────────────┐" \
-    "    │      │ ── CONNECT Request ───────► │              │               │                │" \
-    "    │      │    ${DIM}4-byte length + JSON${RST}      │  1. Parse    │               │                │" \
-    "    │      │                              │  2. Resolve  │ GET /pep/     │  ResourceRepo  │" \
-    "    │ wait │    ${DIM}{${RST}                          │   name via   │ resources/     │    ┌────────┐ │" \
-    "    │  ..  │    ${DIM}  action: connect${RST}         │   CP API ────│─────────────►  │    │ ${RES_NAME} │ │" \
-    "    │      │    ${DIM}  name: ${RES_NAME}${RST}       │              │               │    │ → ${RES_BACKEND}│ │" \
-    "    │      │    ${DIM}}${RST}                          │  3. Cache?   │ ◄──── backend  │    └────────┘ │" \
-    "    │      │                              │     miss →   │               │                │" \
-    "    │      │                              │     CP call  │               │                │" \
-    "    └──────┘                             └──────────────┘               └────────────────┘"
-
-  wait $pid1 $pid2 2>/dev/null || true
-}
-
-step_7() {
-  load_scenario
-  TSEC=35
-
-  set_pane client "$(hdr_idle "CLIENT CLI" "$CLIENT_IP")" "" \
-    "  ${DIM}  En attente de la décision d'autorisation...${RST}" "" \
-    "  ${DIM}  [tunnel mTLS actif — handshake complété]${RST}"
-
-  anim_pane gateway 0.2 \
-    "$(hdr_active "GATEWAY PEP" "$GW_IP")" \
-    "" \
-    "  $(jlog INFO "envoi requête authorize au CP" \
-        "url" "https://${CP_IP}:8443/api/v1/pep/authorize" \
-        "pep_id" "ztna-gw-01")" \
-    "  ${DIM}  → POST avec headers X-PEP-ID + X-PEP-TOKEN${RST}" \
-    "  ${DIM}  → Body: {sub, groups, action, resource:{name, type}, source_ip}${RST}" &
-  local pid1=$!
-
-  sleep 0.5
-  anim_pane cp 0.18 \
-    "$(hdr_active "CONTROL PLANE" "$CP_IP")" \
-    "" \
-    "  $(jlog INFO "requête authorize reçue" \
-        "pep_id" "ztna-gw-01" "sub" "alice" "action" "connect" \
-        "resource_name" "${RES_NAME}" "resource_type" "${RES_TYPE}")" \
-    "  $(jlog INFO "authentification PEP" "pep_id" "ztna-gw-01" "token" "valid" "method" "constant-time compare")" \
-    "  $(jlog INFO "chargement snapshot politiques" "rules_count" "5")" \
-    "  $(jlog INFO "évaluation politique ABAC" \
-        "rule" "allow-admins-${RES_TYPE}" "subject_match" "group:ztna-admins" \
-        "action_match" "connect" "resource_match" "${RES_TYPE}:${RES_NAME}")" \
-    "  $(jlog INFO "vérification conditions contextuelles" "allowed_hours" "08:00-22:00" "check" "pass")" \
-    "  $(jlog INFO "vérification device trust" "required" "medium" "provided" "high" "check" "pass")" \
-    "  $(jlog INFO "règle matchée" "rule_id" "1" "effect" "allow" "groups" "[ztna-admins]")" \
-    "  $(jlog INFO "décision émise" \
-        "decision_id" "${DECISION_ID}" "decision" "allow" "ttl" "3600" \
-        "reason" "rule:allow-admins-${RES_TYPE}")" \
-    "" \
-    "  ${GREEN}${BOLD}  ✓ ALLOW — TTL 3600s — rule:allow-admins-${RES_TYPE}${RST}" &
-  local pid2=$!
-
-  sleep 1.2
-  anim_pane gateway 0.18 \
-    "" \
-    "  $(jlog INFO "décision CP reçue" "decision" "allow" "ttl_seconds" "3600" "decision_id" "${DECISION_ID}")" \
-    "  $(jlog INFO "décision mise en cache" \
-        "key" "alice|connect|${RES_TYPE}:${RES_NAME}" "ttl" "60s")" \
-    "" \
-    "  ${GREEN}${BOLD}  ✓ Accès autorisé par le Control Plane${RST}"
-
-  set_pane flow \
-    "" \
-    "  ${BOLD}Autorisation — Policy Decision Point (ABAC + Context)${RST}" \
-    "" \
-    "    ${YELLOW}GATEWAY (PEP)${RST}         ${DIM}PEP Auth${RST}           ${CYAN}CONTROL PLANE (PDP)${RST}" \
-    "    ┌──────────┐                            ┌──────────────────────┐" \
-    "    │          │ ── POST /pep/authorize ──►  │  1. Auth PEP token   │" \
-    "    │  Cache   │    {sub: alice,             │     constant-time ✓  │" \
-    "    │  miss    │     groups: [ztna-admins],  │                      │" \
-    "    │          │     action: connect,        │  2. Load policies    │" \
-    "    │          │     resource: {             │     5 rules loaded   │" \
-    "    │          │       name: ${RES_NAME},    │                      │" \
-    "    │          │       type: ${RES_TYPE}},   │  3. ABAC evaluation  │" \
-    "    │          │     context: {              │     ${GREEN}match: rule #1${RST}    │" \
-    "    │          │       device_trust: high,   │     ${GREEN}allow-admins-${RES_TYPE}${RST} │" \
-    "    │          │       src_ip: ${CLIENT_IP}}}│                      │" \
-    "    │          │                             │  4. Context checks   │" \
-    "    │          │                             │     hours: 08-22 ✓   │" \
-    "    │          │                             │     trust: high ✓    │" \
-    "    │          │ ◄─ {allow, ttl: 3600} ────  │                      │" \
-    "    │  Cache   │                             │  5. Decision logged  │" \
-    "    │  store ✓ │                             │     id: ${DECISION_ID:0:12}..│" \
-    "    └──────────┘                            └──────────────────────┘"
-
-  wait $pid1 $pid2 2>/dev/null || true
-}
-
-step_8() {
-  load_scenario
-  TSEC=42
-
-  set_pane client "$(hdr_idle "CLIENT CLI" "$CLIENT_IP")" "" \
-    "  ${DIM}  En attente — autorisation en cours de traitement...${RST}"
-
-  anim_pane gateway 0.18 \
-    "$(hdr_active "GATEWAY PEP" "$GW_IP")" \
-    "" \
-    "  $(jlog INFO "résolution de ressource publiée" \
-        "name" "${RES_NAME}" "backend" "${RES_BACKEND}" "type" "${RES_TYPE}")" \
-    "  $(jlog INFO "validation cible résolue" "backend" "${RES_BACKEND}" "ssrf_check" "pass")" \
-    "  $(jlog INFO "création session" \
-        "session_id" "${SESSION_UUID}" "sub" "alice" \
-        "resource_name" "${RES_NAME}" "backend" "${RES_BACKEND}" "cert_serial" "${CERT_SERIAL}")" \
-    "  $(jlog INFO "TTL session appliqué" "ttl_seconds" "3600" "expires_at" "2026-03-09T16:30:42Z")" \
-    "  $(jlog INFO "vérification limite par sujet" "sub" "alice" "current" "0" "max" "10")" \
-    "  $(jlog INFO "session enregistrée" \
-        "session_id" "${SESSION_UUID}" "decision_id" "${DECISION_ID}" \
-        "cert_serial" "${CERT_SERIAL}" "active_count" "1")" \
-    "  $(jlog INFO "envoi télémétrie session.start au CP" \
-        "session_id" "${SESSION_UUID}" "endpoint" "/api/v1/pep/sessions/start")" &
-  local pid1=$!
-
-  sleep 0.6
-  anim_pane cp 0.2 \
-    "$(hdr_active "CONTROL PLANE" "$CP_IP")" \
-    "" \
-    "  $(jlog INFO "session.start reçu" \
-        "session_id" "${SESSION_UUID}" "pep_id" "ztna-gw-01" \
-        "sub" "alice" "resource_name" "${RES_NAME}" "backend" "${RES_BACKEND}")" \
-    "  $(jlog INFO "session enregistrée dans le store" "active_sessions" "1")" &
-  local pid2=$!
-
-  set_pane flow \
-    "" \
-    "  ${BOLD}Résolution Ressource + Session + Télémétrie${RST}" \
-    "" \
-    "    ${YELLOW}GATEWAY${RST}                                         ${CYAN}CONTROL PLANE${RST}" \
-    "    ┌─────────────────────────┐                     ┌────────────────┐" \
-    "    │  1. Resource Resolution  │                     │                │" \
-    "    │  ${RES_NAME} (${RES_TYPE})        │                     │                │" \
-    "    │    → ${RES_BACKEND} (backend) │                     │  Session Store │" \
-    "    │  2. SSRF Check ✓        │                     │                │" \
-    "    │  ┌───────────────────┐  │                     │                │" \
-    "    │  │ ID: ${SESSION_UUID:0:16}..│  │  session.start      │                │" \
-    "    │  │ Sub: alice        │  │ ──────────────────► │  ✓ stored      │" \
-    "    │  │ Cert: ${CERT_SERIAL:0:11}..│  │                     │  active: 1     │" \
-    "    │  │ Backend: resolved │  │                     │                │" \
-    "    │  │ TTL: 3600s        │  │  heartbeat (30s)    │                │" \
-    "    │  │ GC: every 30s     │  │ ─ ─ ─ ─ ─ ─ ─ ─ ► │  last_seen ✓   │" \
-    "    │  └───────────────────┘  │                     │                │" \
-    "    └─────────────────────────┘                     └────────────────┘"
-
-  wait $pid1 $pid2 2>/dev/null || true
-}
-
-step_9() {
-  load_scenario
-  TSEC=48
-
-  anim_pane client 0.2 \
-    "$(hdr_active "CLIENT CLI" "$CLIENT_IP")" \
-    "" \
-    "  $(jlog INFO "réponse Gateway reçue" "status" "allow" "session_id" "${SESSION_UUID}")" \
-    "" \
-    "  ${GREEN}${BOLD}  ✓ Accès autorisé — tunnel proxy actif${RST}" \
-    ""
-
-  if [[ "$RES_TYPE" == "ssh" ]]; then
-    anim_pane client 0.3 \
-      "  \$ ${BOLD}ssh -p ${LOCAL_PORT} alice@localhost${RST}" \
-      "  ${DIM}  Last login: Mon Mar  9 14:22:01 2026 from 10.10.30.20${RST}" \
-      "  ${GREEN}  alice@lan-app:~\$${RST} ${BOLD}hostname && whoami${RST}" \
-      "  lan-app" \
-      "  alice" \
-      "  ${GREEN}  alice@lan-app:~\$${RST} ${BOLD}cat /etc/os-release | head -2${RST}" \
-      "  PRETTY_NAME=\"Ubuntu 22.04.3 LTS\"" \
-      "  NAME=\"Ubuntu\"" \
-      "  ${GREEN}  alice@lan-app:~\$${RST} █"
-  elif [[ "$RES_TYPE" == "web" ]]; then
-    anim_pane client 0.25 \
-      "  \$ ${BOLD}curl http://localhost:${LOCAL_PORT}/api/health${RST}" \
-      "  {\"status\":\"healthy\",\"uptime\":\"48h32m\",\"version\":\"2.1.0\"}" \
-      "" \
-      "  \$ ${BOLD}curl http://localhost:${LOCAL_PORT}/api/data${RST}" \
-      "  {\"items\":[{\"id\":1,\"name\":\"dataset-alpha\"},{\"id\":2,\"name\":\"dataset-beta\"}]}" \
-      "" \
-      "  ${GREEN}${BOLD}  ✓ Réponses HTTP reçues via tunnel ZTNA${RST}"
-  else
-    anim_pane client 0.25 \
-      "  \$ ${BOLD}psql -h localhost -p ${LOCAL_PORT} -U alice -d appdb${RST}" \
-      "  ${DIM}  Password for user alice: ****${RST}" \
-      "  psql (15.4)" \
-      "  Type \"help\" for help." \
-      "" \
-      "  appdb=> ${BOLD}SELECT count(*) FROM users;${RST}" \
-      "   count" \
-      "  -------" \
-      "     1247" \
-      "  (1 row)" \
-      "" \
-      "  appdb=> █"
-  fi &
-  local pidc=$!
-
-  sleep 0.3
-  anim_pane gateway 0.2 \
-    "$(hdr_active "GATEWAY PEP" "$GW_IP")" \
-    "" \
-    "  $(jlog INFO "réponse ALLOW envoyée au client" "session_id" "${SESSION_UUID}")" \
-    "  $(jlog INFO "ouverture connexion vers backend résolu" "backend" "${RES_BACKEND}" "resource" "${RES_NAME}")" \
-    "  $(jlog INFO "connexion backend établie" "target" "${RES_BACKEND}" "local_addr" "10.10.30.20:52491")" \
-    "  $(jlog INFO "proxy TCP bidirectionnel actif" "client" "${CLIENT_IP}:49832" "backend" "${RES_BACKEND}")" \
-    "  $(jlog INFO "relay en cours" "bytes_in" "1482" "bytes_out" "3891" "duration" "2.1s")" \
-    "  $(jlog INFO "relay en cours" "bytes_in" "2947" "bytes_out" "8234" "duration" "4.8s")" &
-  local pidg=$!
-
-  set_pane cp "$(hdr_idle "CONTROL PLANE" "$CP_IP")" "" \
-    "  $(jlog INFO "heartbeat reçu" "pep_id" "ztna-gw-01" "version" "1.0.0")" "" \
-    "  ${DIM}  Session active : ${SESSION_UUID:0:16}...${RST}" \
-    "  ${DIM}  Monitoring en cours...${RST}"
-
-  set_pane flow \
-    "" \
-    "  ${BOLD}Proxy TCP Bidirectionnel — Ressource Résolue → Backend${RST}" \
-    "" \
-    "    ${GREEN}APP${RST}       ${GREEN}CLIENT${RST}             ${DIM}mTLS tunnel${RST}        ${YELLOW}GATEWAY${RST}            ${DIM}TCP relay${RST}       ${MAGENTA}BACKEND${RST}" \
-    "    ┌─────┐  ┌──────┐                            ┌──────────┐                      ┌────────┐" \
-    "    │curl │  │      │ ═══════════════════════════►│          │═════════════════════►│        │" \
-    "    │ssh  │→ │ ${RES_PROTO}  │     encrypted traffic      │  PROXY   │    cleartext relay     │ ${RES_BACKEND} │" \
-    "    │psql │  │      │◄═══════════════════════════ │  io.Copy │◄═════════════════════│        │" \
-    "    └─────┘  └──────┘                            └──────────┘                      └────────┘" \
-    "    localhost ${CLIENT_IP}                            ${GW_IP}                          ${BACKEND_IP}" \
-    "    :${LOCAL_PORT}" \
-    "" \
-    "    ${YELLOW}Resource Resolution :${RST} ${RES_NAME} (${RES_TYPE})  →  ${RES_BACKEND} (backend résolu via CP)" \
-    "    ${DIM}Port forward local : 127.0.0.1:${LOCAL_PORT} → tunnel mTLS → backend${RST}" \
-    "    ${DIM}Bytes client→cible : 2947        Bytes cible→client : 8234${RST}" \
-    "    ${DIM}Session TTL : 3600s              Cert serial tracké pour révocation${RST}"
-
-  wait $pidc $pidg 2>/dev/null || true
-}
-
-step_10() {
-  load_scenario
-  TSEC=55
-
-  anim_pane client 0.2 \
-    "$(hdr_done "CLIENT CLI" "$CLIENT_IP")" \
-    "" \
-    "  $(jlog INFO "déconnexion du tunnel" "session_id" "${SESSION_UUID}")" \
-    "  $(jlog INFO "session terminée" "duration" "12.4s" "bytes_sent" "2947" "bytes_received" "8234")" \
-    "" \
-    "  ${GREEN}${BOLD}  ✓ Session terminée proprement${RST}" &
-  local pidc=$!
-
-  sleep 0.3
-  anim_pane gateway 0.2 \
-    "$(hdr_active "GATEWAY PEP" "$GW_IP")" \
-    "" \
-    "  $(jlog INFO "fin de connexion client" "remote" "${CLIENT_IP}:49832")" \
-    "  $(jlog INFO "fermeture proxy TCP" "resource" "${RES_NAME}" "backend" "${RES_BACKEND}" "duration_ms" "12400")" \
-    "  $(jlog INFO "métriques session finales" \
-        "session_id" "${SESSION_UUID}" "bytes_in" "2947" "bytes_out" "8234" \
-        "duration_ms" "12400" "end_reason" "client_close")" \
-    "  $(jlog INFO "session désenregistrée" "session_id" "${SESSION_UUID}" "active_count" "0")" \
-    "  $(jlog INFO "envoi télémétrie session.end" \
-        "session_id" "${SESSION_UUID}" "endpoint" "/api/v1/pep/sessions/end")" &
-  local pidg=$!
-
-  sleep 0.8
-  anim_pane cp 0.2 \
-    "$(hdr_active "CONTROL PLANE" "$CP_IP")" \
-    "" \
-    "  $(jlog INFO "session.end reçu" \
-        "session_id" "${SESSION_UUID}" "pep_id" "ztna-gw-01" \
-        "duration_ms" "12400" "bytes_in" "2947" "bytes_out" "8234" \
-        "end_reason" "client_close")" \
-    "  $(jlog INFO "session archivée" "active_sessions" "0")" &
-  local pidcp=$!
-
-  set_pane flow \
-    "" \
-    "  ${BOLD}Fin de Session — Métriques & Télémétrie${RST}" \
-    "" \
-    "    ${GREEN}CLIENT${RST}               ${YELLOW}GATEWAY${RST}                         ${CYAN}CONTROL PLANE${RST}" \
-    "    ┌──────┐           ┌──────────────────┐               ┌────────────────┐" \
-    "    │      │ ─ close ─►│                  │               │                │" \
-    "    │ done │           │ 1. Close proxy   │               │                │" \
-    "    │      │           │ 2. Set end stats │               │                │" \
-    "    └──────┘           │    bytes: 2947↑  │               │                │" \
-    "                       │           8234↓  │  session.end  │                │" \
-    "                       │    duration: 12s │ ────────────► │ Archive        │" \
-    "                       │    reason: close │               │ session        │" \
-    "                       │ 3. Unregister    │               │ active: 0      │" \
-    "                       │    active: 0     │               │                │" \
-    "                       └──────────────────┘               └────────────────┘" \
-    "" \
-    "    ${BOLD}Métriques collectées :${RST}" \
-    "    Durée: 12.4s | Bytes↑ 2947 | Bytes↓ 8234 | Raison: client_close"
-
-  wait $pidc $pidg $pidcp 2>/dev/null || true
-}
-
-step_11() {
-  load_scenario
-  set_pane client \
-    "$(hdr_done "CLIENT CLI" "$CLIENT_IP")" \
-    "" \
-    "  ${GREEN}  ✓ Authentification OIDC${RST}" \
-    "  ${GREEN}  ✓ Certificat X.509 device + CA${RST}" \
-    "  ${GREEN}  ✓ Découverte ressources publiées (ztna resources)${RST}" \
-    "  ${GREEN}  ✓ Port forward local 127.0.0.1:${LOCAL_PORT}${RST}" \
-    "  ${GREEN}  ✓ Tunnel mTLS TLS 1.3${RST}" \
-    "  ${GREEN}  ✓ Accès ${RES_NAME} (${RES_TYPE}) → ${RES_BACKEND}${RST}" \
-    "  ${GREEN}  ✓ Session terminée proprement${RST}"
-
-  set_pane gateway \
-    "$(hdr_done "GATEWAY PEP" "$GW_IP")" \
-    "" \
-    "  ${GREEN}  ✓ CRL vérification + révocation active${RST}" \
-    "  ${GREEN}  ✓ Résolution ressource via CP (name → backend)${RST}" \
-    "  ${GREEN}  ✓ Protection SSRF sur backend résolu${RST}" \
-    "  ${GREEN}  ✓ Autorisation via CP + cache${RST}" \
-    "  ${GREEN}  ✓ Session TTL + cert_serial tracké${RST}" \
-    "  ${GREEN}  ✓ Proxy TCP bidirectionnel${RST}" \
-    "  ${GREEN}  ✓ Télémétrie start/end + end_reason${RST}" \
-    "  ${GREEN}  ✓ Métriques bytes_in/bytes_out${RST}"
-
-  set_pane cp \
-    "$(hdr_done "CONTROL PLANE" "$CP_IP")" \
-    "" \
-    "  ${GREEN}  ✓ OIDC/Keycloak validation${RST}" \
-    "  ${GREEN}  ✓ PKI — Device CA + CA cert${RST}" \
-    "  ${GREEN}  ✓ PEP authentication${RST}" \
-    "  ${GREEN}  ✓ Ressources publiées (web/ssh/db)${RST}" \
-    "  ${GREEN}  ✓ Policy Engine ABAC + Context${RST}" \
-    "  ${GREEN}  ✓ Session monitoring + audit${RST}" \
-    "  ${GREEN}  ✓ Heartbeat tracking${RST}" \
-    "  ${GREEN}  ✓ CRL management + push revoke${RST}"
-
-  set_pane flow \
-    "" \
-    "  ${BOLD}${CYAN}╔══════════════════════════════════════════════════════════════════════════════╗${RST}" \
-    "  ${BOLD}${CYAN}║                RÉSUMÉ — Plateforme de Ressources Publiées                  ║${RST}" \
-    "  ${BOLD}${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Ressources publiées  ${GREEN}✓${RST} CRL Auto-Refresh       ${GREEN}✓${RST} Protection SSRF         ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Policy ABAC+Context ${GREEN}✓${RST} Decision Cache + TTL   ${GREEN}✓${RST} CP-Down Resilience      ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Name → Backend (CP) ${GREEN}✓${RST} Active Revocation      ${GREEN}✓${RST} Admin Session Kill      ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Session TTL/GC      ${GREEN}✓${RST} Télémétrie + EndReason ${GREEN}✓${RST} MaxBytesReader          ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${GREEN}✓${RST} Device Cert + CA    ${GREEN}✓${RST} Graceful Shutdown       ${GREEN}✓${RST} Architecture Hexagonale ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}╠══════════════════════════════════════════════════════════════════════════════╣${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${BOLD}Resource:${RST} ${RES_NAME} (${RES_TYPE}) → ${RES_BACKEND} (résolution centralisée CP)     ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${BOLD}Policy:${RST} ABAC + AllowedHours + DeviceTrust (context-aware)              ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}║${RST}  ${BOLD}Revoke:${RST} CRL diff → KillBySerial → sessions actives terminées           ${CYAN}║${RST}" \
-    "  ${BOLD}${CYAN}╚══════════════════════════════════════════════════════════════════════════════╝${RST}" \
-    "" \
-    "  ${DIM}  Scénario testé : ${RES_DESC} (${RES_NAME} → ${RES_BACKEND})${RST}" \
-    "  ${DIM}  Flux : OIDC → DeviceCert → Resources → PortForward → mTLS → CRL → CONNECT → Resolve(CP) → AuthZ → Session → Proxy → End${RST}"
-}
-
-# ============================================================================
-# CONTROLLER — Interactive Navigation (runs in its own window)
+# CONTROLLER — Interactive Navigation
 # ============================================================================
 
 run_controller() {
   while [ ! -d "$DEMO_DIR" ]; do sleep 0.1; done
   mkdir -p "$DEMO_DIR"
 
-  set -m  # Enable job control for process group kills
-
   local step=0
-  local max_step=11
-  local anim_pid=0
-
-  kill_step() {
-    [[ $anim_pid -gt 0 ]] || return 0
-    kill -- -"$anim_pid" 2>/dev/null
-    kill "$anim_pid" 2>/dev/null
-    wait "$anim_pid" 2>/dev/null
-    anim_pid=0
-  }
+  local max_step=6
 
   local step_names=(
-    "Bienvenue"
+    "Pre-flight Checks"
     "Sélection du Scénario"
     "Authentification OIDC"
     "Émission de Certificat"
     "Découverte des Ressources"
-    "Port Forward + mTLS + CRL"
-    "Requête CONNECT + Résolution"
-    "Autorisation ABAC"
-    "Session + Télémétrie"
-    "Proxy TCP — Accès Ressource"
-    "Fin de Session — Métriques"
+    "Accès à la Ressource"
     "Résumé"
   )
 
@@ -921,9 +1078,9 @@ run_controller() {
     clear
     printf '%b\n' \
       "" \
-      "  ${BOLD}${CYAN}╔══════════════════════════════════════════════════════════════════╗${RST}" \
-      "  ${BOLD}${CYAN}║          ZTNA — Démonstration Interactive Orchestrée            ║${RST}" \
-      "  ${BOLD}${CYAN}╚══════════════════════════════════════════════════════════════════╝${RST}" \
+      "  ${BOLD}${CYAN}╔══════════════════════════════════════════════════════════╗${RST}" \
+      "  ${BOLD}${CYAN}║     ZTNA — Démonstration Interactive (100% Réelle)      ║${RST}" \
+      "  ${BOLD}${CYAN}╚══════════════════════════════════════════════════════════╝${RST}" \
       ""
 
     if [[ $step -eq 0 ]]; then
@@ -931,13 +1088,18 @@ run_controller() {
         "  ${BOLD}Étape ${step}/${max_step}${RST} — ${BOLD}${step_names[$step]}${RST}" \
         "  $(progress_bar $step $max_step)" \
         "" \
-        "  ${DIM}  Appuyez sur ${RST}${BOLD}ENTER${RST}${DIM} pour commencer la démonstration${RST}" \
+        "  ${DIM}  Appuyez sur ${RST}${BOLD}ENTER${RST}${DIM} pour lancer les vérifications${RST}" \
         "" \
         "  ${DIM}  Navigation :${RST}" \
         "  ${DIM}    ENTER  → Étape suivante${RST}" \
         "  ${DIM}    b      → Étape précédente${RST}" \
         "  ${DIM}    r      → Rejouer l'étape${RST}" \
-        "  ${DIM}    q      → Quitter${RST}"
+        "  ${DIM}    q      → Quitter${RST}" \
+        "" \
+        "  ${YELLOW}★ Toutes les opérations sont exécutées sur l'infrastructure réelle ★${RST}" \
+        "  ${DIM}  CP logs et GW logs sont en temps réel (journalctl -f)${RST}" \
+        "  ${DIM}  Fenêtre CLIENT exécute de vrais curl, openssl, ssh, psql${RST}"
+
     elif [[ $step -eq 1 ]]; then
       printf '%b\n' \
         "  ${BOLD}Étape ${step}/${max_step}${RST} — ${BOLD}${step_names[$step]}${RST}" \
@@ -945,20 +1107,38 @@ run_controller() {
         "" \
         "  Choisissez le type d'accès à démontrer :" \
         "" \
-        "  ${BOLD}${GREEN}  [1]${RST}  Accès SSH       (ssh-dev-01 → ${BACKEND_IP}:22)" \
-        "  ${BOLD}${BLUE}  [2]${RST}  Accès Web       (grafana-internal → ${BACKEND_IP}:3000)" \
-        "  ${BOLD}${YELLOW}  [3]${RST}  Accès PostgreSQL (pg-staging → ${BACKEND_IP}:5432)" \
+        "  ${BOLD}${GREEN}  [1]${RST}  Accès SSH        — Flux 1 (SSH cert) → lan-app:22" \
+        "  ${BOLD}${BLUE}  [2]${RST}  Accès HTTP       — Flux 2 (mTLS) → nginx lan-app:80" \
+        "  ${BOLD}${YELLOW}  [3]${RST}  Accès PostgreSQL — Flux 2 (mTLS TCP) → pg lan-app:5432" \
         "" \
         "  ${DIM}  Appuyez sur 1, 2 ou 3${RST}"
+
     elif [[ $step -eq $max_step ]]; then
       load_scenario
       printf '%b\n' \
         "  ${BOLD}Étape ${step}/${max_step}${RST} — ${BOLD}${step_names[$step]}${RST}  ${DIM}[${RES_DESC}]${RST}" \
         "  $(progress_bar $step $max_step)" \
         "" \
-        "  ${GREEN}${BOLD}  ✓ Démonstration complète !${RST}" \
+        "  ${GREEN}${BOLD}  ✓ Démonstration complète ! (100% réelle)${RST}" \
         "" \
-        "  ${DIM}  [b] Retour   [r] Rejouer   [1] Autre scénario   [q] Quitter${RST}"
+        "  ${DIM}  [b] Retour   [1] Autre scénario   [q] Quitter${RST}"
+
+    elif [[ $step -eq 5 ]]; then
+      load_scenario
+      local access_hint=""
+      case "$RES_TYPE" in
+        ssh)  access_hint="Session SSH interactive — tapez 'exit' dans CLIENT pour terminer" ;;
+        http) access_hint="Requête HTTP automatique — résultat affiché dans CLIENT" ;;
+        db)   access_hint="Session psql interactive — tapez '\\q' dans CLIENT pour terminer" ;;
+      esac
+      printf '%b\n' \
+        "  ${BOLD}Étape ${step}/${max_step}${RST} — ${BOLD}${step_names[$step]}${RST}  ${DIM}[${RES_DESC}]${RST}" \
+        "  $(progress_bar $step $max_step)" \
+        "" \
+        "  ${YELLOW}★ ${access_hint} ★${RST}" \
+        "" \
+        "  ${DIM}  [ENTER] Lancer l'accès   [b] Retour   [q] Quitter${RST}"
+
     else
       load_scenario
       printf '%b\n' \
@@ -968,58 +1148,81 @@ run_controller() {
         "  ${DIM}  [ENTER] Suivant   [b] Retour   [r] Rejouer   [q] Quitter${RST}"
     fi
 
-    # Run step animation in background
-    "step_${step}" 2>/dev/null &
-    anim_pid=$!
+    # Update flow diagram
+    "flow_step_${step}" 2>/dev/null &
+    local flow_pid=$!
+
+    # Signal client for this step
+    signal_client "$step"
 
     # Wait for user input
     if [[ $step -eq 1 ]]; then
       while true; do
         read -rsn1 key
         case "$key" in
-          1) SCENARIO=1; RES_TYPE="ssh"; RES_PORT=22; RES_HOST="lan-app"
-             RES_BACKEND="${BACKEND_IP}:22"
-             RES_DESC="Serveur SSH Backend"; RES_PROTO="SSH"; RES_NAME="ssh-dev-01"; LOCAL_PORT=2222
-             save_scenario; kill_step; step=2; break ;;
-          2) SCENARIO=2; RES_TYPE="web"; RES_PORT=3000; RES_HOST="lan-app"
-             RES_BACKEND="${BACKEND_IP}:3000"
-             RES_DESC="Grafana Interne (Web)"; RES_PROTO="HTTP"; RES_NAME="grafana-internal"; LOCAL_PORT=8888
-             save_scenario; kill_step; step=2; break ;;
-          3) SCENARIO=3; RES_TYPE="db"; RES_PORT=5432; RES_HOST="lan-app"
-             RES_BACKEND="${BACKEND_IP}:5432"
-             RES_DESC="Base de données PostgreSQL"; RES_PROTO="PSQL"; RES_NAME="pg-staging"; LOCAL_PORT=15432
-             save_scenario; kill_step; step=2; break ;;
-          b|B) kill_step; step=0; break ;;
-          q|Q) kill_step; cleanup_all; exit 0 ;;
+          1) SCENARIO=1; RES_TYPE="ssh"; RES_NAME="ssh-dev-01"
+             RES_DESC="Serveur SSH Backend (Flux 1)"
+             RES_BACKEND="${APP_IP}:22"; LOCAL_PORT=2222
+             save_scenario; step=2; break ;;
+          2) SCENARIO=2; RES_TYPE="http"; RES_NAME="grafana-internal"
+             RES_DESC="HTTP via mTLS (Flux 2)"
+             RES_BACKEND="${APP_IP}:80"; LOCAL_PORT=8888
+             save_scenario; step=2; break ;;
+          3) SCENARIO=3; RES_TYPE="db"; RES_NAME="pg-staging"
+             RES_DESC="PostgreSQL via mTLS (Flux 2)"
+             RES_BACKEND="${APP_IP}:5432"; LOCAL_PORT=15432
+             save_scenario; step=2; break ;;
+          b|B) step=0; break ;;
+          q|Q) cleanup_all; exit 0 ;;
+        esac
+      done
+    elif [[ $step -eq 5 ]]; then
+      # Resource access step — wait for interactive session to finish
+      while true; do
+        read -rsn1 key
+        case "$key" in
+          "")
+            rm -f "$DEMO_DIR/client-done"
+            signal_client "5"
+            echo ""
+            echo -e "  ${DIM}  En attente de la fin de la session dans CLIENT...${RST}"
+            echo -e "  ${DIM}  (SSH: exit | HTTP: auto | psql: \\q)${RST}"
+            local wait_count=0
+            while [[ ! -f "$DEMO_DIR/client-done" && $wait_count -lt 1200 ]]; do
+              sleep 0.5
+              wait_count=$((wait_count + 1))
+            done
+            step=6; break ;;
+          b|B) step=4; break ;;
+          q|Q) cleanup_all; exit 0 ;;
         esac
       done
     else
       while true; do
         read -rsn1 key
         case "$key" in
-          "") kill_step
-              if [[ $step -lt $max_step ]]; then step=$((step + 1)); fi
+          "") if [[ $step -lt $max_step ]]; then step=$((step + 1)); fi
               break ;;
-          b|B) kill_step
-               if [[ $step -gt 0 ]]; then step=$((step - 1)); fi
+          b|B) if [[ $step -gt 0 ]]; then step=$((step - 1)); fi
                break ;;
-          r|R) kill_step; break ;;
-          q|Q) kill_step; cleanup_all; exit 0 ;;
-          1)   kill_step; step=1; break ;;
-          0)   kill_step; step=0; break ;;
+          r|R) break ;;
+          q|Q) cleanup_all; exit 0 ;;
+          1)   step=1; break ;;
+          0)   step=0; break ;;
         esac
       done
     fi
+
+    wait $flow_pid 2>/dev/null || true
   done
 }
 
 cleanup_all() {
   printf '\n%b\n\n' "  ${DIM}Fermeture des fenêtres...${RST}"
   sleep 0.3
+  pkill -f "ztna-tcp-tunnel.py" 2>/dev/null || true
   if [[ -f "$PID_FILE" ]]; then
-    while read -r pid; do
-      kill "$pid" 2>/dev/null
-    done < "$PID_FILE"
+    while read -r pid; do kill "$pid" 2>/dev/null; done < "$PID_FILE"
   fi
   rm -rf "$DEMO_DIR"
 }
@@ -1038,20 +1241,13 @@ detect_terminal() {
   return 1
 }
 
-# Ensure xdotool is available (needed for window positioning)
 ensure_xdotool() {
   local needs_install=false
-  
-  if ! command -v xdotool >/dev/null 2>&1; then
-    needs_install=true
-  fi
-  
-  if ! command -v wmctrl >/dev/null 2>&1; then
-    needs_install=true
-  fi
-  
+  if ! command -v xdotool >/dev/null 2>&1; then needs_install=true; fi
+  if ! command -v wmctrl >/dev/null 2>&1; then needs_install=true; fi
+
   if [[ "$needs_install" == true ]]; then
-    echo -e "\033[0;36m[ZTNA Demo]\033[0m Installation des outils de gestion de fenêtres..."
+    echo -e "${CYAN}[ZTNA Demo]${RST} Installation des outils de gestion de fenêtres..."
     if command -v apt-get >/dev/null 2>&1; then
       sudo apt-get install -y -qq xdotool wmctrl >/dev/null 2>&1
     elif command -v dnf >/dev/null 2>&1; then
@@ -1060,53 +1256,15 @@ ensure_xdotool() {
       sudo pacman -S --noconfirm xdotool wmctrl >/dev/null 2>&1
     fi
   fi
-  
+
   command -v xdotool >/dev/null 2>&1 && command -v wmctrl >/dev/null 2>&1
 }
 
-# Open a terminal window running a command, return its PID
-# $1=title  $2=command
-open_window() {
-  local title="$1" cmd="$2"
-  local term
-  term=$(detect_terminal)
-
-  case "$term" in
-    konsole)
-      # Use --separate to force a new window instance (not a tab)
-      konsole --separate --hide-menubar --hide-tabbar \
-        --notransparency \
-        -p tabtitle="$title" \
-        -e bash -c "$cmd" &
-      ;;
-    gnome-terminal)
-      gnome-terminal --window --title="$title" -- bash -c "$cmd" &
-      ;;
-    xfce4-terminal)
-      xfce4-terminal --title="$title" -e "bash -c '$cmd'" &
-      ;;
-    mate-terminal)
-      mate-terminal --window --title="$title" -e "bash -c '$cmd'" &
-      ;;
-    xterm)
-      xterm -T "$title" -fa "Monospace" -fs 10 -e bash -c "$cmd" &
-      ;;
-    *)
-      echo "ERREUR: Aucun émulateur de terminal trouvé" >&2
-      exit 1
-      ;;
-  esac
-  echo $!
-}
-
-# Position a window by searching for its title with xdotool
-# $1=title  $2=x  $3=y  $4=width  $5=height
 position_window_by_title() {
   local title="$1" x="$2" y="$3" w="$4" h="$5"
 
   if ! command -v xdotool >/dev/null 2>&1; then return 1; fi
 
-  # Wait for the window to appear (retry up to 3s)
   local wid="" attempts=0
   while [[ -z "$wid" && $attempts -lt 30 ]]; do
     wid=$(xdotool search --name "$title" 2>/dev/null | head -1)
@@ -1116,22 +1274,15 @@ position_window_by_title() {
   done
 
   if [[ -n "$wid" ]]; then
-    # First, unmaximize if needed (different methods for different WMs)
     wmctrl -ir "$wid" -b remove,maximized_vert,maximized_horz 2>/dev/null || true
     xdotool windowstate --remove MAXIMIZED_VERT MAXIMIZED_HORZ "$wid" 2>/dev/null || true
     sleep 0.05
-    
-    # Set window size first, then position (more reliable)
     xdotool windowsize --sync "$wid" "$w" "$h" 2>/dev/null
     sleep 0.05
     xdotool windowmove --sync "$wid" "$x" "$y" 2>/dev/null
-    
-    # Raise window to ensure it's visible
     xdotool windowraise "$wid" 2>/dev/null
     xdotool windowfocus "$wid" 2>/dev/null
     sleep 0.05
-    
-    # Force position again (some WMs reposition after focus)
     xdotool windowmove --sync "$wid" "$x" "$y" 2>/dev/null
     return 0
   fi
@@ -1148,65 +1299,42 @@ launch_windows() {
     echo "ERREUR: Aucun émulateur de terminal trouvé (konsole, gnome-terminal, xfce4-terminal, xterm)"
     exit 1
   }
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m Terminal détecté : $term"
+  echo -e "${CYAN}[ZTNA Demo]${RST} Terminal détecté : $term"
 
-  # Check for xdotool
   local has_xdotool=false
   if ensure_xdotool; then
     has_xdotool=true
-    echo -e "\033[0;36m[ZTNA Demo]\033[0m xdotool disponible ✓"
+    echo -e "${CYAN}[ZTNA Demo]${RST} xdotool disponible ✓"
   else
-    echo -e "\033[0;33m[ZTNA Demo]\033[0m xdotool non disponible — les fenêtres ne seront pas positionnées automatiquement"
+    echo -e "${YELLOW}[ZTNA Demo]${RST} xdotool non disponible — pas de positionnement automatique"
   fi
 
-  # Kill any existing demo
   if [[ -f "$PID_FILE" ]]; then
     while read -r pid; do kill "$pid" 2>/dev/null; done < "$PID_FILE"
   fi
   rm -rf "$DEMO_DIR"
   mkdir -p "$DEMO_DIR"
 
-  # Initialize pane files
-  for p in client gateway cp flow; do
-    echo "" > "$DEMO_DIR/pane-$p"
-    echo "0" > "$DEMO_DIR/epoch-$p"
-  done
+  echo "" > "$DEMO_DIR/pane-flow"
+  echo "0" > "$DEMO_DIR/epoch-flow"
+  echo "" > "$DEMO_DIR/client-step"
 
-  # Save default scenario
   save_scenario
 
-  # ── Screen layout ──────────────────────────────
-  # 1920x1080 desktop with KDE panel + window decorations
-  # 
-  # Optimized to fit all 5 windows without overlap:
-  #
-  #  ┌─── CONTROLLER ──────┐ ┌─── FLUX ───────────┐
-  #  │  (navigation 350px)  │ │ (architecture)     │  row1: 350px
-  #  └──────────────────────┘ └────────────────────┘
-  #  ┌─ CLIENT ─┐ ┌─ GATEWAY ─┐ ┌─ CTRL PLANE ───┐
-  #  │          │ │            │ │                │  row2: 520px
-  #  └──────────┘ └────────────┘ └────────────────┘
-  #
-  # Total height: 350 + 520 + 40 (gaps+decorations) + 60 (taskbar+margin) = 970px ✓
-  #
   local gap=10
   local margin_top=10
-  local margin_bottom=90  # KDE panel + safety margin
+  local margin_bottom=90
   local sw=1920
-  local sh=$((1080 - margin_bottom))
   local row1_h=340
   local row2_h=500
   local half_w=$(( (sw - gap * 3) / 2 ))
   local third_w=$(( (sw - gap * 4) / 3 ))
   local row2_y=$(( margin_top + row1_h + gap * 2 ))
 
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m Ouverture de 5 fenêtres séparées..."
+  echo -e "${CYAN}[ZTNA Demo]${RST} Ouverture de 5 fenêtres séparées..."
 
   local PIDS=()
-  local term
-  term=$(detect_terminal)
 
-  # Helper to launch a window based on terminal type
   launch_terminal_window() {
     local title="$1" cmd="$2"
     case "$term" in
@@ -1230,95 +1358,79 @@ launch_windows() {
     echo $!
   }
 
-  # Window 1: CONTROLLER (top-left)
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m   → Ouverture CONTROLLER..."
+  echo -e "${CYAN}[ZTNA Demo]${RST}   → CONTROLLER..."
   launch_terminal_window "ZTNA — CONTROLLER" "bash '${SCRIPT_PATH}' --controller"
   PIDS+=($!)
   sleep 0.3
 
-  # Window 2: FLUX (top-right)
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m   → Ouverture FLUX..."
+  echo -e "${CYAN}[ZTNA Demo]${RST}   → FLUX (diagrams)..."
   launch_terminal_window "ZTNA — FLUX" "bash '${SCRIPT_PATH}' --display flow"
   PIDS+=($!)
   sleep 0.3
 
-  # Window 3: CLIENT (bottom-left)
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m   → Ouverture CLIENT..."
-  launch_terminal_window "ZTNA — CLIENT" "bash '${SCRIPT_PATH}' --display client"
+  echo -e "${CYAN}[ZTNA Demo]${RST}   → CLIENT (real ops)..."
+  launch_terminal_window "ZTNA — CLIENT" "bash '${SCRIPT_PATH}' --client"
   PIDS+=($!)
   sleep 0.3
 
-  # Window 4: GATEWAY (bottom-center)
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m   → Ouverture GATEWAY..."
-  launch_terminal_window "ZTNA — GATEWAY" "bash '${SCRIPT_PATH}' --display gateway"
+  echo -e "${CYAN}[ZTNA Demo]${RST}   → GATEWAY (live logs)..."
+  launch_terminal_window "ZTNA — GATEWAY" "bash '${SCRIPT_PATH}' --live-logs gw"
   PIDS+=($!)
   sleep 0.3
 
-  # Window 5: CONTROL PLANE (bottom-right)
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m   → Ouverture CONTROL PLANE..."
-  launch_terminal_window "ZTNA — CONTROL PLANE" "bash '${SCRIPT_PATH}' --display cp"
+  echo -e "${CYAN}[ZTNA Demo]${RST}   → CONTROL PLANE (live logs)..."
+  launch_terminal_window "ZTNA — CONTROL PLANE" "bash '${SCRIPT_PATH}' --live-logs cp"
   PIDS+=($!)
   sleep 0.2
 
-  # Save PIDs for cleanup
   printf '%s\n' "${PIDS[@]}" > "$PID_FILE"
+  echo -e "${CYAN}[ZTNA Demo]${RST}   → 5 fenêtres créées ✓"
 
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m   → 5 fenêtres créées ✓"
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m"
-
-  # Position windows if xdotool is available
   if [[ "$has_xdotool" == true ]]; then
-    sleep 0.8  # Let all windows fully appear with decorations
+    sleep 0.8
+    echo -e "${CYAN}[ZTNA Demo]${RST} Positionnement automatique..."
 
-    echo -e "\033[0;36m[ZTNA Demo]\033[0m Positionnement automatique des fenêtres..."
+    position_window_by_title "ZTNA — CONTROLLER" "$gap" "$margin_top" "$half_w" "$row1_h" && \
+      echo -e "${CYAN}[ZTNA Demo]${RST}   ✓ CONTROLLER"
+    position_window_by_title "ZTNA — FLUX" "$((half_w + gap * 2))" "$margin_top" "$half_w" "$row1_h" && \
+      echo -e "${CYAN}[ZTNA Demo]${RST}   ✓ FLUX"
+    position_window_by_title "ZTNA — CLIENT" "$gap" "$row2_y" "$third_w" "$row2_h" && \
+      echo -e "${CYAN}[ZTNA Demo]${RST}   ✓ CLIENT"
+    position_window_by_title "ZTNA — GATEWAY" "$((third_w + gap * 2))" "$row2_y" "$third_w" "$row2_h" && \
+      echo -e "${CYAN}[ZTNA Demo]${RST}   ✓ GATEWAY"
+    position_window_by_title "ZTNA — CONTROL PLANE" "$((third_w * 2 + gap * 3))" "$row2_y" "$third_w" "$row2_h" && \
+      echo -e "${CYAN}[ZTNA Demo]${RST}   ✓ CONTROL PLANE"
 
-    # Row 1: CONTROLLER (top-left) + FLUX (top-right)
-    if position_window_by_title "ZTNA — CONTROLLER" "$gap" "$margin_top" "$half_w" "$row1_h"; then
-      echo -e "\033[0;36m[ZTNA Demo]\033[0m   ✓ CONTROLLER positionné"
-    fi
-    if position_window_by_title "ZTNA — FLUX" "$((half_w + gap * 2))" "$margin_top" "$half_w" "$row1_h"; then
-      echo -e "\033[0;36m[ZTNA Demo]\033[0m   ✓ FLUX positionné"
-    fi
-    
-    # Row 2: CLIENT, GATEWAY, CONTROL PLANE (3 columns)
-    if position_window_by_title "ZTNA — CLIENT" "$gap" "$row2_y" "$third_w" "$row2_h"; then
-      echo -e "\033[0;36m[ZTNA Demo]\033[0m   ✓ CLIENT positionné"
-    fi
-    if position_window_by_title "ZTNA — GATEWAY" "$((third_w + gap * 2))" "$row2_y" "$third_w" "$row2_h"; then
-      echo -e "\033[0;36m[ZTNA Demo]\033[0m   ✓ GATEWAY positionné"
-    fi
-    if position_window_by_title "ZTNA — CONTROL PLANE" "$((third_w * 2 + gap * 3))" "$row2_y" "$third_w" "$row2_h"; then
-      echo -e "\033[0;36m[ZTNA Demo]\033[0m   ✓ CONTROL PLANE positionné"
-    fi
-
-    echo -e "\033[0;36m[ZTNA Demo]\033[0m Layout terminé — toutes les fenêtres sont visibles ✓"
+    echo -e "${CYAN}[ZTNA Demo]${RST} Layout terminé ✓"
   fi
 
   echo ""
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m ┌─────────────────────────────────────────────────┐"
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m │  5 fenêtres ouvertes sur le bureau              │"
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m │  ► Cliquez sur la fenêtre CONTROLLER             │"
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m │  ► Appuyez ENTER pour naviguer la démo           │"
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m │  ► 'q' pour quitter depuis le controller         │"
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m │  ► Ctrl+C ici pour tout fermer                   │"
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m └─────────────────────────────────────────────────┘"
+  echo -e "${CYAN}[ZTNA Demo]${RST} ┌─────────────────────────────────────────────────────────┐"
+  echo -e "${CYAN}[ZTNA Demo]${RST} │  5 fenêtres ouvertes — 100% opérations réelles          │"
+  echo -e "${CYAN}[ZTNA Demo]${RST} │                                                         │"
+  echo -e "${CYAN}[ZTNA Demo]${RST} │  ► CONTROLLER : naviguer la démo (ENTER / b / q)        │"
+  echo -e "${CYAN}[ZTNA Demo]${RST} │  ► CLIENT     : commandes réelles (curl, ssh, psql)     │"
+  echo -e "${CYAN}[ZTNA Demo]${RST} │  ► GATEWAY    : vrais logs journalctl en temps réel      │"
+  echo -e "${CYAN}[ZTNA Demo]${RST} │  ► CTRL PLANE : vrais logs journalctl en temps réel      │"
+  echo -e "${CYAN}[ZTNA Demo]${RST} │  ► FLUX       : diagrammes d'architecture                │"
+  echo -e "${CYAN}[ZTNA Demo]${RST} │                                                         │"
+  echo -e "${CYAN}[ZTNA Demo]${RST} │  Ctrl+C ici pour tout fermer                            │"
+  echo -e "${CYAN}[ZTNA Demo]${RST} └─────────────────────────────────────────────────────────┘"
   echo ""
 
-  # Trap Ctrl+C to cleanup
-  trap 'echo ""; echo -e "\033[0;36m[ZTNA Demo]\033[0m Arrêt..."; for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; rm -rf "$DEMO_DIR"; exit 0' INT TERM
+  trap 'echo ""; echo -e "${CYAN}[ZTNA Demo]${RST} Arrêt..."; pkill -f "ztna-tcp-tunnel.py" 2>/dev/null; for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done; rm -rf "$DEMO_DIR"; exit 0' INT TERM
 
-  # Wait for controller to exit
   local ctrl_pid="${PIDS[0]}"
   while kill -0 "$ctrl_pid" 2>/dev/null; do
     sleep 1
   done
 
-  # Cleanup when controller exits
+  pkill -f "ztna-tcp-tunnel.py" 2>/dev/null || true
   for pid in "${PIDS[@]}"; do
     kill "$pid" 2>/dev/null
   done
   rm -rf "$DEMO_DIR"
-  echo -e "\033[0;36m[ZTNA Demo]\033[0m Terminé."
+  echo -e "${CYAN}[ZTNA Demo]${RST} Terminé."
 }
 
 # ============================================================================
@@ -1327,10 +1439,16 @@ launch_windows() {
 
 case "${1:-}" in
   --display)
-    run_display "${2:?Usage: $0 --display <pane_name>}"
+    run_display "${2:?Usage: $0 --display flow}"
     ;;
   --controller)
     run_controller
+    ;;
+  --client)
+    run_client
+    ;;
+  --live-logs)
+    run_live_logs "${2:?Usage: $0 --live-logs <cp|gw>}"
     ;;
   *)
     launch_windows

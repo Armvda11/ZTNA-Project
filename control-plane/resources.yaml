@@ -22,7 +22,7 @@ resources:
   - name: pg-staging
     display_name: "PostgreSQL Staging"
     type: db
-    backend: "10.10.30.15:5432"
+    backend: "10.10.30.10:5432"
     gateway_id: ztna-gw-01
     group_match:
       - ztna-admins

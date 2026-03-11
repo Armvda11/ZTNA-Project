@@ -5,7 +5,7 @@
 .PHONY: help \
         quickstart prereq doctor doctor-dry doctor-full bootstrap \
         up lab-start destroy \
-        deploy deploy-gw \
+        deploy deploy-gw deploy-db \
         check status check-vms check-ssh healthz \
         test-flux1 test-flux1-auto test-flux2 test-crl-routing test-pep-register test-cp-gw-lab \
         ssh-client ssh-gw ssh-cp ssh-app ssh-admin \
@@ -13,6 +13,7 @@
         logs-cp logs-gw clean \
         build-cp build-gw build-cli test-unit test certs \
         demo demo-test demo-detach demo-arch demo-tests demo-interactive \
+        full-demo full-demo-no-db full-demo-yes \
         init check-requirements plan apply test-flux2-local setup-routing
 
 PROJECT_DIR   := $(shell pwd)
@@ -58,6 +59,7 @@ help:
 	@echo "$(YELLOW)Deploy$(NC)"
 	@echo "  make deploy        Déployer control-plane + Keycloak"
 	@echo "  make deploy-gw     Déployer gateway"
+	@echo "  make deploy-db     Déployer PostgreSQL sur lan-app (optionnel, pour démo DB)"
 	@echo ""
 	@echo "$(YELLOW)Checks$(NC)"
 	@echo "  make check         Check global (VMs + SSH + healthz)"
@@ -83,8 +85,9 @@ help:
 	@echo "  make build-cp | build-gw | build-cli | test-unit | test | certs"
 	@echo ""
 	@echo "$(YELLOW)Demo$(NC)"
-	@echo "  make demo              Dashboard tmux 4 panes (CP logs, GW logs, client, status)"
+	@echo "  make full-demo         One-shot : vérifie + déploie ce qui manque + lance la démo"
 	@echo "  make demo-interactive  Démo interactive orchestrée (5 fenêtres séparées sur le bureau)"
+	@echo "  make demo              Dashboard tmux 4 panes (CP logs, GW logs, client, status)"
 	@echo "  make demo-test         Idem + lance automatiquement test-flux2 (mTLS tunnel)"
 	@echo "  make demo-detach       Lance le dashboard en arrière-plan"
 	@echo ""
@@ -142,6 +145,9 @@ deploy:
 
 deploy-gw: build-gw
 	@bash ./scripts/deploy-gateway.sh
+
+deploy-db:
+	@bash ./scripts/deploy-postgresql.sh
 
 # ============================================================================
 # CHECKS
@@ -307,6 +313,15 @@ demo-tests:
 
 demo-interactive:
 	@bash ./scripts/demo-interactive.sh
+
+full-demo:
+	@bash ./scripts/full-demo.sh
+
+full-demo-no-db:
+	@bash ./scripts/full-demo.sh --no-db
+
+full-demo-yes:
+	@bash ./scripts/full-demo.sh --yes
 
 # ============================================================================
 # LEGACY ALIASES (temporaires)

@@ -12,7 +12,6 @@
       "protocol": "openid-connect",
       "publicClient": true,
       "standardFlowEnabled": false,
-      "oauth2DeviceAuthorizationGrantEnabled": true,
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
       "protocolMappers": [
@@ -47,7 +46,6 @@
       "protocol": "openid-connect",
       "publicClient": true,
       "standardFlowEnabled": false,
-      "oauth2DeviceAuthorizationGrantEnabled": true,
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
       "protocolMappers": [

@@ -78,7 +78,15 @@ done
 log "Vérification Docker sur ztna-cp..."
 if ! ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "docker --version" >/dev/null 2>&1; then
   log "Installation de Docker..."
-  ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "sudo apt update && sudo DEBIAN_FRONTEND=noninteractive apt install -y docker.io docker-compose && sudo systemctl enable --now docker && sudo usermod -aG docker ztna"
+  # docker-compose-v2 fournit 'docker compose' (plugin, Ubuntu 22.04+)
+  # docker-compose  fournit 'docker-compose' (standalone, fallback Ubuntu 20.04)
+  ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "
+    sudo apt-get update -qq && \
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io && \
+    (sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-v2 2>/dev/null || \
+     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose) && \
+    sudo systemctl enable --now docker && \
+    sudo usermod -aG docker ztna"
 fi
 log "✓ Docker opérationnel"
 
@@ -99,7 +107,14 @@ log "✓ Fichiers copiés"
 
 # 6. Lancer Keycloak
 log "Démarrage de Keycloak..."
-ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "cd ztna/control-plane/keycloak && docker-compose up -d"
+# Support Docker Compose V2 (plugin 'docker compose') et V1 (standalone 'docker-compose')
+ssh ${SSH_OPTS} ${TARGET_USER}@${TARGET_HOST} "
+  cd ztna/control-plane/keycloak && \
+  if docker compose version >/dev/null 2>&1; then \
+    docker compose up -d; \
+  else \
+    docker-compose up -d; \
+  fi"
 sleep 5
 log "✓ Keycloak démarré"
 
